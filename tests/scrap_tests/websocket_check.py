@@ -43,7 +43,6 @@ def start_ticker_websocket(pair, callback):
         ws.send(json.dumps(subscription_message))
         logger.info(f"Subscribed to ticker feed for {pair}")
 
-    # Initialize the WebSocketApp
     ws = websocket.WebSocketApp(
         ws_url,
         on_message=on_message,
@@ -52,17 +51,14 @@ def start_ticker_websocket(pair, callback):
     )
     ws.on_open = on_open
 
-    # Run WebSocket in a separate thread
     ws_thread = threading.Thread(target=ws.run_forever, daemon=True)
     ws_thread.start()
 
 
 # Main entry point
 if __name__ == "__main__":
-    # Start WebSocket for ticker feed
     start_ticker_websocket("XBT/USD", process_ticker_message)
 
-    # Keep the main thread alive
     try:
         while True:
             time.sleep(1)

@@ -77,7 +77,6 @@ class BreakoutStrategy:
             & (signals["volume_confirm"])
         )
 
-        # Combined signal for easier debugging
         signals["triggered_signal"] = signals["buy_signal"] | signals["sell_signal"]
 
         # Stop-loss and take-profit levels
@@ -85,7 +84,6 @@ class BreakoutStrategy:
         signals["stop_loss"] = signals["close"] - recent_volatility * self.stop_loss_factor
         signals["take_profit"] = signals["close"] + recent_volatility * self.take_profit_factor
 
-        # Drop NaNs so final signals are valid
         signals.dropna(inplace=True)
 
         return signals

@@ -75,4 +75,3 @@ if __name__ == "__main__":
     client.start_ticker_websocket("XBT/USD", process_ticker_message)
 
     get_ticks()
-    # buysummat()

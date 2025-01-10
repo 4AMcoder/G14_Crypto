@@ -22,8 +22,8 @@ def load_specific_csv_from_zip(zip_path, file_names):
                     # Read the CSV and specify column names
                     df = pd.read_csv(
                         f,
-                        names=column_names,  # Add headers explicitly
-                        header=None,         # Indicate no header row in CSV
+                        names=column_names,  # no headers in the static data, adding it in
+                        header=None,         # Indicate no header aswell
                     )
                     # Ensure timestamps are numeric to avoid FutureWarning
                     df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")

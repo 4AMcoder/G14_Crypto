@@ -16,21 +16,17 @@ def setup_logger(name="trading_bot", log_file="logs/trading_bot.log", level=logg
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # File handler with rotation
     file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
-    # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
 
-    # Add handlers to the logger
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
     return logger
 
-# Example usage
 if __name__ == "__main__":
     logger = setup_logger()
     logger.info("Logger initialized.")
