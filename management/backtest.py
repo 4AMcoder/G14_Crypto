@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from strategies.breakout import BreakoutStrategy
+from strategies.mean_reversion import MeanReversionStrategy
 from utils.historical_data_loader import load_specific_csv_from_zip
 import mplfinance as mpf
 
@@ -120,15 +121,19 @@ def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocatio
     data = data_dict.get(file_name)
 
     breakout_strategy = BreakoutStrategy(base_lookback=10, buffer=0.001, rsi_lookback=10, volume_lookback=10)
+    mean_reversion_strategy = MeanReversionStrategy(base_lookback=20, rsi_lookback=20, volume_lookback=10)
 
-    backtest = Backtest(data[:200], breakout_strategy, initial_cash=initial_cash, max_allocation_pct=max_allocation_pct)
+    # backtest = Backtest(data, breakout_strategy, initial_cash=initial_cash, max_allocation_pct=max_allocation_pct)
+
+    backtest = Backtest(data, mean_reversion_strategy, initial_cash=initial_cash, max_allocation_pct=max_allocation_pct)
     output = backtest.run()
     metrics = backtest.calculate_metrics()
 
     result = {"file_name": file_name, "metrics": metrics, "trades": backtest.trades}
 
     if plot:
-        breakout_strategy.plot_signals(output)
+        # breakout_strategy.plot_signals(output)
+        mean_reversion_strategy.plot_signals(output)
 
     return result
 

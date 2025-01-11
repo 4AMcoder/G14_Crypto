@@ -180,20 +180,29 @@ class BreakoutStrategy:
         signals["position_size"] = self.calculate_position_size(signals, lookback)
         
         # Generate signals
+        signals["bb_breach_up"] = (
+            (signals["high"] > signals["bb_upper"]) &  # Using high instead of close
+            (signals["close"] > signals["bb_middle"])   # Ensure close is above middle band
+        )
+        
+        signals["bb_breach_down"] = (
+            (signals["low"] < signals["bb_lower"]) &   # Using low instead of close
+            (signals["close"] < signals["bb_middle"])   # Ensure close is below middle band
+        )
+
+        # Generate signals with relaxed conditions
         signals["buy_signal"] = (
-            (signals["close"] > signals["bb_upper"]) &
-            (signals["close"] > signals["vwap"]) &
-            (signals["rsi"] > 30) & (signals["rsi"] < 75) &
-            (signals["rc_signal"] > -self.rc_threshold) &
-            signals["strong_volume"]
+            signals["bb_breach_up"] &
+            ((signals["close"] > signals["vwap"]) | (signals["close"] > signals["bb_middle"])) &
+            ((signals["rsi"] > 30) & (signals["rsi"] < 80)) &  # Widened RSI bounds
+            ((signals["rc_signal"] > -self.rc_threshold) | signals["strong_volume"])  # Either RC signal OR strong volume
         )
 
         signals["sell_signal"] = (
-            (signals["close"] < signals["bb_lower"]) &
-            (signals["close"] < signals["vwap"]) &
-            (signals["rsi"] < 70) & (signals["rsi"] > 25) &
-            (signals["rc_signal"] < self.rc_threshold) &
-            signals["strong_volume"]
+            signals["bb_breach_down"] &
+            ((signals["close"] < signals["vwap"]) | (signals["close"] < signals["bb_middle"])) &
+            ((signals["rsi"] < 70) & (signals["rsi"] > 20)) &  # Widened RSI bounds
+            ((signals["rc_signal"] < self.rc_threshold) | signals["strong_volume"])  # Either RC signal OR strong volume
         )
 
         # Calculate stop-loss and take-profit levels
@@ -263,7 +272,7 @@ class BreakoutStrategy:
             x=buy_points.index,
             y=buy_points["low"] * 0.999,
             mode="markers",
-            marker=dict(symbol="triangle-up", size=10, color="green"),
+            marker=dict(symbol="triangle-up", size=15, color="green"),
             name="Buy Signal"
         ), row=1, col=1)
 
@@ -271,7 +280,7 @@ class BreakoutStrategy:
             x=sell_points.index,
             y=sell_points["high"] * 1.001,
             mode="markers",
-            marker=dict(symbol="triangle-down", size=10, color="red"),
+            marker=dict(symbol="triangle-down", size=15, color="red"),
             name="Sell Signal"
         ), row=1, col=1)
 
@@ -311,7 +320,7 @@ class BreakoutStrategy:
         fig.update_xaxes(title="Time", row=2, col=1)
 
         # Add RSI levels
-        fig.add_hline(y=70, line_dash="dash", line_color="green", row=2, col=1, secondary_y=True)
-        fig.add_hline(y=30, line_dash="dash", line_color="red", row=2, col=1, secondary_y=True)
+        fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1, secondary_y=True)
+        fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1, secondary_y=True)
 
         fig.show()
