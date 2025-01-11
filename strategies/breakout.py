@@ -1,15 +1,13 @@
 import pandas as pd
 import numpy as np
-from typing import Optional
-import mplfinance as mpf
-import matplotlib.pyplot as plt
+from typing import Optional, Tuple
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 class BreakoutStrategy:
     def __init__(
         self,
-        lookback: int = 20,
+        base_lookback: int = 20,
         buffer: float = 0.001,
         stop_loss_factor: float = 1.0,
         take_profit_factor: float = 2.0,
@@ -17,9 +15,12 @@ class BreakoutStrategy:
         volume_lookback: int = 20, 
         rc_threshold: float = 0.5, 
         volume_multiplier: float = 0.1,
-        pivot_window: int = 15, 
+        pivot_window: int = 15,
+        breakout_threshold: float = 0.0015,
+        bb_std: float = 2.0,
+        timeframe_adjustments: dict = None
     ):
-        self.lookback = lookback
+        self.base_lookback = base_lookback
         self.buffer = buffer
         self.stop_loss_factor = stop_loss_factor
         self.take_profit_factor = take_profit_factor
@@ -28,6 +29,29 @@ class BreakoutStrategy:
         self.rc_threshold = rc_threshold
         self.volume_multiplier = volume_multiplier
         self.pivot_window = pivot_window
+        self.breakout_threshold = breakout_threshold
+        self.bb_std = bb_std
+        
+        # Default timeframe adjustments if none provided
+        self.timeframe_adjustments = timeframe_adjustments or {
+            '1min': 0.5,    # Shorter lookback for very short timeframes
+            '5min': 0.7,
+            '15min': 0.8,
+            '30min': 0.9,
+            '60min': 1.0,   # Base lookback (1H)
+            '240min': 1.2,  # 4H
+            '720min': 1.5,  # 12H
+            '1440min': 1.8, # 24H (daily)
+        }
+        
+        # Data size adjustments
+        self.data_size_adjustments = {
+            1000: 1.0,    # Base multiplier
+            2500: 1.2,    # Medium datasets
+            5000: 1.4,    # Larger datasets
+            10000: 1.6,   # Very large datasets
+            20000: 1.8    # Massive datasets
+        }
 
     def calculate_atr(self, data: pd.DataFrame) -> pd.Series:
         """Calculate Average True Range"""
@@ -39,130 +63,140 @@ class BreakoutStrategy:
         tr2 = abs(high - close.shift(1))
         tr3 = abs(low - close.shift(1))
         
-        tr = pd.DataFrame({'tr1': tr1, 'tr2': tr2, 'tr3': tr3}).max(axis=1)
-        return tr.rolling(window=self.lookback, min_periods=1).mean()  # Added min_periods
+        tr = pd.DataFrame({
+            'tr1': tr1, 
+            'tr2': tr2, 
+            'tr3': tr3
+        }).max(axis=1)
+        
+        atr = tr.ewm(span=self.base_lookback, min_periods=self.base_lookback).mean()
+        return atr
 
     def calculate_rsi(self, data: pd.Series, window: int) -> pd.Series:
-        """Calculate RSI using simple method to avoid NaN values"""
+        """Calculate RSI using exponential moving average method"""
+        if len(data) < window:
+            raise ValueError(f"Input series length ({len(data)}) must be >= window size ({window})")
+
         delta = data.diff()
-
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-
-        avg_gain = gain.rolling(window=window, min_periods=1).mean()
-        avg_loss = loss.rolling(window=window, min_periods=1).mean()
-
-        # avoid div 0 when prices totally flat
+        gains = delta.where(delta > 0, 0.0)
+        losses = -delta.where(delta < 0, 0.0)
+        
+        avg_gain = gains.ewm(com=window-1, min_periods=window).mean()
+        avg_loss = losses.ewm(com=window-1, min_periods=window).mean()
+        
         rs = avg_gain / avg_loss.replace(0, np.finfo(float).eps)
-
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-
+        return 100 - (100 / (1 + rs))
 
     def calculate_robert_carver(self, data: pd.DataFrame) -> pd.Series:
-        """Enhanced Robert Carver signal using EMA"""
+        """Calculate Robert Carver signal using EMA"""
         close_prices = data["close"]
-        rolling_mean = close_prices.ewm(span=self.lookback, min_periods=1).mean()
-        rolling_std = close_prices.rolling(window=self.lookback, min_periods=1).std()
-
-        # avoid div 0 when prices totally flat
+        rolling_mean = close_prices.ewm(span=self.base_lookback, min_periods=self.base_lookback).mean()
+        rolling_std = close_prices.rolling(window=self.base_lookback, min_periods=self.base_lookback).std()
+        
+        # Avoid division by zero
         rolling_std = rolling_std.replace(0, np.finfo(float).eps)
+        
+        return (close_prices - rolling_mean) / rolling_std
 
-        rc = (close_prices - rolling_mean) / rolling_std 
-        return rc 
+    def calculate_bollinger_bands(self, data: pd.Series, lookback: int) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        """Calculate Bollinger Bands"""
+        rolling_mean = data.ewm(span=lookback, min_periods=lookback).mean()
+        rolling_std = data.rolling(window=lookback, min_periods=lookback).std()
+        
+        upper_band = rolling_mean + (rolling_std * self.bb_std)
+        lower_band = rolling_mean - (rolling_std * self.bb_std)
+        
+        return upper_band, rolling_mean, lower_band
 
     def calculate_vwap(self, data: pd.DataFrame) -> pd.Series:
-        """Calculate VWAP with rolling window"""
+        """Calculate VWAP"""
         typical_price = (data["high"] + data["low"] + data["close"]) / 3
-        rolling_typical_volume = (typical_price * data["volume"]).rolling(window=self.lookback, min_periods=self.lookback)
-        rolling_volume = data["volume"].rolling(window=self.lookback, min_periods=self.lookback)
-
-        vwap = rolling_typical_volume.sum() / rolling_volume.sum()
-
+        vwap = (typical_price * data["volume"]).cumsum() / data["volume"].cumsum()
         return vwap
 
-    def calculate_obv(self, data: pd.DataFrame) -> pd.Series:
-        """Calculate On-Balance Volume"""
-        return (np.sign(data['close'].diff().fillna(0)) * data['volume']).cumsum()
+    def calculate_position_size(self, data: pd.DataFrame, lookback: int) -> pd.Series:
+        """Calculate dynamic position size based on volatility"""
+        atr = self.calculate_atr(data)
+        avg_atr = atr.rolling(window=lookback).mean()
+        
+        # Normalize ATR to get relative volatility
+        rel_vol = atr / avg_atr
+        
+        # Scale position size inversely with volatility (higher vol = smaller position)
+        pos_size = 1 / rel_vol
+        
+        # Normalize between 0.1 and 1.0
+        pos_size = pos_size.clip(0.1, 1.0)
+        
+        return pos_size
 
-    def detect_pivots(self, data: pd.DataFrame) -> pd.DataFrame:
-        def is_pivot(candle_idx: int, window: int) -> int:
-            if candle_idx - window < 0 or candle_idx + window >= len(data):
-                return 0
+    def _get_adjusted_lookback(self, timeframe: str, data_length: int) -> int:
+        """Calculate adjusted lookback period based on timeframe and data size"""
+        # Get base multiplier for timeframe
+        base_multiplier = self.timeframe_adjustments.get(timeframe, 1.0)
+        
+        # Get data size multiplier
+        size_multiplier = 1.0
+        for size, mult in sorted(self.data_size_adjustments.items()):
+            if data_length > size:
+                size_multiplier = mult
+        
+        # Calculate final lookback
+        adjusted_lookback = int(self.base_lookback * base_multiplier * size_multiplier)
+        
+        # Ensure lookback is reasonable
+        max_lookback = int(data_length * 0.2)  # Don't use more than 20% of data
+        min_lookback = 5
+        
+        return min(max_lookback, max(min_lookback, adjusted_lookback))
 
-            pivot_high, pivot_low = True, True
-            for i in range(candle_idx - window, candle_idx + window + 1):
-                if data.iloc[candle_idx].low > data.iloc[i].low:
-                    pivot_low = False
-                if data.iloc[candle_idx].high < data.iloc[i].high:
-                    pivot_high = False
-
-            if pivot_high and pivot_low:
-                return 3
-            elif pivot_high:
-                return 1
-            elif pivot_low:
-                return 2
-            return 0
-
-        data["pivot"] = [is_pivot(i, self.pivot_window) for i in range(len(data))]
-        return data
-
-    def generate_signals(self, data: pd.DataFrame) -> pd.DataFrame:
-        if len(data) < self.lookback:
-            raise ValueError(f"Data length ({len(data)}) is shorter than lookback period ({self.lookback})")
+    def generate_signals(self, data: pd.DataFrame, timeframe: str = '60min') -> pd.DataFrame:
+        """Generate trading signals"""
+        if len(data) < self.base_lookback:
+            raise ValueError(f"Data length ({len(data)}) is shorter than base lookback period ({self.base_lookback})")
 
         signals = data.copy()
-
+        lookback = self._get_adjusted_lookback(timeframe, len(data))
+        
+        # Calculate indicators
         signals["atr"] = self.calculate_atr(signals)
-        signals["upper_channel"] = signals["high"].rolling(window=self.lookback, min_periods=1).max()
-        signals["lower_channel"] = signals["low"].rolling(window=self.lookback, min_periods=1).min()
-        signals["rsi"] = self.calculate_rsi(signals["close"], self.rsi_lookback)
+        signals["rsi"] = self.calculate_rsi(signals["close"], lookback)
         signals["rc_signal"] = self.calculate_robert_carver(signals)
         signals["vwap"] = self.calculate_vwap(signals)
-        signals["obv"] = self.calculate_obv(signals)
-
-        signals["volume_ma"] = signals["volume"].ewm(span=self.volume_lookback, min_periods=1).mean()
-        signals["volume_std"] = signals["volume"].rolling(self.volume_lookback, min_periods=1).std()
+        
+        # Calculate Bollinger Bands
+        bb_upper, bb_middle, bb_lower = self.calculate_bollinger_bands(signals['close'], lookback)
+        signals['bb_upper'] = bb_upper
+        signals['bb_middle'] = bb_middle
+        signals['bb_lower'] = bb_lower
+        
+        # Volume analysis
+        signals["volume_ma"] = signals["volume"].ewm(span=lookback, min_periods=lookback).mean()
+        signals["volume_std"] = signals["volume"].rolling(lookback, min_periods=lookback).std()
         signals["volume_trend"] = signals["volume"] / signals["volume_ma"]
-        signals["volume_confirm"] = (signals["volume"] > signals["volume_ma"])
-
-        # Trend Analysis
-        signals["short_ma"] = signals["close"].ewm(span=self.lookback//2, min_periods=1).mean()
-        signals["long_ma"] = signals["close"].ewm(span=self.lookback, min_periods=1).mean()
-        signals["trend_alignment"] = (signals["short_ma"] > signals["long_ma"]).astype(int)
-
-        # Pivot Detection
-        signals = self.detect_pivots(signals)
-
-        # Breach Detection with less strict conditions
-        signals["donchian_breach_upper"] = (
-            (signals["close"] > signals["upper_channel"]) &
-            (signals["volume"] > signals["volume_ma"])
-        )
-        signals["donchian_breach_lower"] = (
-            (signals["close"] < signals["lower_channel"]) &
-            (signals["volume"] > signals["volume_ma"])
-        )
-
-        # Buy and Sell Signals with relaxed conditions
+        signals["strong_volume"] = signals["volume"] > signals["volume_ma"] * (1 + self.volume_multiplier)
+        
+        # Calculate position size
+        signals["position_size"] = self.calculate_position_size(signals, lookback)
+        
+        # Generate signals
         signals["buy_signal"] = (
-            signals["donchian_breach_upper"] &
+            (signals["close"] > signals["bb_upper"]) &
             (signals["close"] > signals["vwap"]) &
-            (signals["rsi"] > 30) &  
-            (signals["rc_signal"] > -self.rc_threshold) & 
-            (signals["volume"] > signals["volume_ma"]) 
+            (signals["rsi"] > 30) & (signals["rsi"] < 75) &
+            (signals["rc_signal"] > -self.rc_threshold) &
+            signals["strong_volume"]
         )
 
         signals["sell_signal"] = (
-            signals["donchian_breach_lower"] &
+            (signals["close"] < signals["bb_lower"]) &
             (signals["close"] < signals["vwap"]) &
-            (signals["rsi"] < 70) &  
-            (signals["rc_signal"] < self.rc_threshold) & 
-            (signals["volume"] > signals["volume_ma"])
+            (signals["rsi"] < 70) & (signals["rsi"] > 25) &
+            (signals["rc_signal"] < self.rc_threshold) &
+            signals["strong_volume"]
         )
 
-        # Stop-loss and Take-profit using ATR
+        # Calculate stop-loss and take-profit levels
         signals["stop_loss"] = np.where(
             signals["buy_signal"],
             signals["close"] - signals["atr"] * self.stop_loss_factor,
@@ -184,93 +218,85 @@ class BreakoutStrategy:
         )
 
         return signals
-    
-    def plot_signals(self, signals: pd.DataFrame) -> None:
-        """
-        Plot candlestick chart with RSI, volume, Donchian channels, and buy/sell signals.
-        Chart 1: Candlesticks with Donchian channels and buy/sell signal vertical lines
-        Chart 2: Volume bars (colored by price direction) with RSI line (dual y-axes)
-        
-        Parameters:
-        - signals (pd.DataFrame): DataFrame containing trading data and signals
-        """
-        # Ensure required fields
-        required_columns = {"open", "high", "low", "close", "volume", "buy_signal", 
-                        "sell_signal", "upper_channel", "lower_channel", "rsi"}
-        if not required_columns.issubset(signals.columns):
-            raise ValueError(f"Missing columns in signals DataFrame. Required: {required_columns}")
 
+    def plot_signals(self, signals: pd.DataFrame) -> None:
+        """Plot trading signals with Bollinger Bands and combined volume/RSI subplot"""
         fig = make_subplots(
             rows=2, cols=1,
             shared_xaxes=True,
             vertical_spacing=0.03,
-            subplot_titles=("Candlestick Chart with Signals", "Volume and RSI"),
-            row_width=[0.3, 0.7], 
+            subplot_titles=("Price with Bollinger Bands", "Volume and RSI"),
+            row_width=[0.3, 0.7],
             specs=[[{"secondary_y": False}],
-                [{"secondary_y": True}]] 
+                  [{"secondary_y": True}]]
         )
 
+        # Candlestick chart
         fig.add_trace(go.Candlestick(
             x=signals.index,
             open=signals["open"],
             high=signals["high"],
             low=signals["low"],
             close=signals["close"],
-            name="Candlestick"
+            name="Price"
+        ), row=1, col=1)
+
+        # Bollinger Bands
+        for band, color in [
+            ("bb_upper", "rgba(173, 204, 255, 0.7)"),
+            ("bb_middle", "rgba(98, 128, 255, 0.7)"),
+            ("bb_lower", "rgba(173, 204, 255, 0.7)")
+        ]:
+            fig.add_trace(go.Scatter(
+                x=signals.index,
+                y=signals[band],
+                mode="lines",
+                line=dict(color=color, width=1),
+                name=f"{band.replace('_', ' ').title()}"
+            ), row=1, col=1)
+
+        # Buy/Sell signals
+        buy_points = signals[signals["buy_signal"]]
+        sell_points = signals[signals["sell_signal"]]
+
+        fig.add_trace(go.Scatter(
+            x=buy_points.index,
+            y=buy_points["low"] * 0.999,
+            mode="markers",
+            marker=dict(symbol="triangle-up", size=10, color="green"),
+            name="Buy Signal"
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=signals.index,
-            y=signals["upper_channel"],
-            mode="lines",
-            line=dict(color="green", width=1),
-            name="Upper Channel"
+            x=sell_points.index,
+            y=sell_points["high"] * 1.001,
+            mode="markers",
+            marker=dict(symbol="triangle-down", size=10, color="red"),
+            name="Sell Signal"
         ), row=1, col=1)
 
-        fig.add_trace(go.Scatter(
-            x=signals.index,
-            y=signals["lower_channel"],
-            mode="lines",
-            line=dict(color="red", width=1),
-            name="Lower Channel"
-        ), row=1, col=1)
-
-        for i, row in signals.iterrows():
-            if row["buy_signal"]:
-                fig.add_shape(
-                    type="line",
-                    x0=row.name, x1=row.name,
-                    y0=signals["low"].min(), y1=signals["high"].max(),
-                    line=dict(color="green", dash="dot"),
-                    row=1, col=1
-                )
-            if row["sell_signal"]:
-                fig.add_shape(
-                    type="line",
-                    x0=row.name, x1=row.name,
-                    y0=signals["low"].min(), y1=signals["high"].max(),
-                    line=dict(color="red", dash="dot"),
-                    row=1, col=1
-                )
-
+        # Volume
         colors = ['green' if close >= open else 'red' 
                 for open, close in zip(signals['open'], signals['close'])]
-
+        
         fig.add_trace(go.Bar(
             x=signals.index,
             y=signals["volume"],
-            name="Volume",
             marker_color=colors,
+            name="Volume",
+            opacity=0.7
         ), row=2, col=1, secondary_y=False)
 
+        # RSI
         fig.add_trace(go.Scatter(
             x=signals.index,
             y=signals["rsi"],
             mode="lines",
-            line=dict(color="blue", width=1),
+            line=dict(color="purple", width=1),
             name="RSI"
         ), row=2, col=1, secondary_y=True)
 
+        # Update layout
         fig.update_layout(
             title="Trading Analysis Dashboard",
             height=900,
@@ -278,9 +304,14 @@ class BreakoutStrategy:
             xaxis_rangeslider_visible=False
         )
 
+        # Update axes
         fig.update_yaxes(title="Price", row=1, col=1)
         fig.update_yaxes(title="Volume", row=2, col=1, secondary_y=False)
         fig.update_yaxes(title="RSI", range=[0, 100], row=2, col=1, secondary_y=True)
         fig.update_xaxes(title="Time", row=2, col=1)
+
+        # Add RSI levels
+        fig.add_hline(y=70, line_dash="dash", line_color="green", row=2, col=1, secondary_y=True)
+        fig.add_hline(y=30, line_dash="dash", line_color="red", row=2, col=1, secondary_y=True)
 
         fig.show()

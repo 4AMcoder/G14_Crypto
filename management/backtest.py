@@ -31,7 +31,7 @@ class Backtest:
         """
         Run the backtest.
         """
-        signals = self.strategy.generate_signals(self.data)
+        signals = self.strategy.generate_signals(self.data, timeframe="240min")
 
         total_steps = len(signals)
         with tqdm(total=total_steps, desc="Backtest Progress") as pbar:
@@ -119,7 +119,7 @@ def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocatio
     data_dict = load_specific_csv_from_zip(zip_path, [file_name])
     data = data_dict.get(file_name)
 
-    breakout_strategy = BreakoutStrategy(lookback=10, buffer=0.001, rsi_lookback=10, volume_lookback=10)
+    breakout_strategy = BreakoutStrategy(base_lookback=10, buffer=0.001, rsi_lookback=10, volume_lookback=10)
 
     backtest = Backtest(data[:200], breakout_strategy, initial_cash=initial_cash, max_allocation_pct=max_allocation_pct)
     output = backtest.run()
@@ -135,7 +135,7 @@ def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocatio
 
 if __name__ == "__main__":
     zip_path = "data/raw/Kraken_OHLCVT.zip"
-    files_to_test = ["XBTUSD_240.csv", "XRPUSDT_30.csv"]
+    files_to_test = ["XBTUSD_240.csv"]
 
     # Run backtests in parallel
     results = []
