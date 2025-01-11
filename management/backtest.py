@@ -32,7 +32,6 @@ class Backtest:
         Run the backtest.
         """
         signals = self.strategy.generate_signals(self.data)
-        print(signals.head())
 
         total_steps = len(signals)
         with tqdm(total=total_steps, desc="Backtest Progress") as pbar:
@@ -77,6 +76,7 @@ class Backtest:
         # Store portfolio value in the signals DataFrame
         signals["portfolio_value"] = self.cash + self.position * signals["close"]
         self.data["portfolio_value"] = signals["portfolio_value"]
+        return signals
 
     def calculate_metrics(self):
         """
@@ -101,33 +101,8 @@ class Backtest:
             "cumulative_return": self.data["portfolio_value"].iloc[-1] / self.data["portfolio_value"].iloc[0] - 1,
         }
 
-    def plot_candlestick_chart(self):
-        """
-        Plot a candlestick chart of the data with RSI, Donchian Channels, and Volume.
-        """
-        chart_data = self.data.copy()
-        chart_data = chart_data.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
-        chart_data = chart_data[["Open", "High", "Low", "Close", "Volume"]]
 
-        # Add Donchian Channels and RSI
-        add_plots = [
-            mpf.make_addplot(self.data["rsi"], panel=1, ylabel="RSI", color="blue"),
-            mpf.make_addplot(self.data["upper_channel"], color="green"),
-            mpf.make_addplot(self.data["lower_channel"], color="red"),
-        ]
-
-        mpf.plot(
-            chart_data,
-            type="candle",
-            title="Candlestick Chart with Backtest Signals",
-            style="charles",
-            ylabel="Price",
-            volume=True,
-            addplot=add_plots,
-        )
-
-
-def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocation_pct=0.1, plot=False):
+def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocation_pct=0.15, plot=False):
     """
     Run the backtest for a single file.
 
@@ -144,23 +119,23 @@ def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocatio
     data_dict = load_specific_csv_from_zip(zip_path, [file_name])
     data = data_dict.get(file_name)
 
-    breakout_strategy = BreakoutStrategy(lookback=120, buffer=0.001, rsi_lookback=60, volume_lookback=60)
+    breakout_strategy = BreakoutStrategy(lookback=10, buffer=0.001, rsi_lookback=10, volume_lookback=10)
 
-    backtest = Backtest(data, breakout_strategy, initial_cash=initial_cash, max_allocation_pct=max_allocation_pct)
-    backtest.run()
+    backtest = Backtest(data[:200], breakout_strategy, initial_cash=initial_cash, max_allocation_pct=max_allocation_pct)
+    output = backtest.run()
     metrics = backtest.calculate_metrics()
 
     result = {"file_name": file_name, "metrics": metrics, "trades": backtest.trades}
 
     if plot:
-        backtest.plot_candlestick_chart()
+        breakout_strategy.plot_signals(output)
 
     return result
 
 
 if __name__ == "__main__":
     zip_path = "data/raw/Kraken_OHLCVT.zip"
-    files_to_test = ["XBTUSD_60.csv"]
+    files_to_test = ["XBTUSD_240.csv", "XRPUSDT_30.csv"]
 
     # Run backtests in parallel
     results = []

@@ -9,15 +9,15 @@ from plotly.subplots import make_subplots
 class BreakoutStrategy:
     def __init__(
         self,
-        lookback: int = 10,
+        lookback: int = 20,
         buffer: float = 0.001,
         stop_loss_factor: float = 1.0,
         take_profit_factor: float = 2.0,
-        rsi_lookback: int = 7,  
-        volume_lookback: int = 5, 
+        rsi_lookback: int = 20,  
+        volume_lookback: int = 20, 
         rc_threshold: float = 0.5, 
         volume_multiplier: float = 0.1,
-        pivot_window: int = 3, 
+        pivot_window: int = 15, 
     ):
         self.lookback = lookback
         self.buffer = buffer
@@ -114,7 +114,6 @@ class BreakoutStrategy:
 
         signals = data.copy()
 
-        # Technical Indicators with NaN handling
         signals["atr"] = self.calculate_atr(signals)
         signals["upper_channel"] = signals["high"].rolling(window=self.lookback, min_periods=1).max()
         signals["lower_channel"] = signals["low"].rolling(window=self.lookback, min_periods=1).min()
@@ -123,11 +122,10 @@ class BreakoutStrategy:
         signals["vwap"] = self.calculate_vwap(signals)
         signals["obv"] = self.calculate_obv(signals)
 
-        # Volume Analysis
         signals["volume_ma"] = signals["volume"].ewm(span=self.volume_lookback, min_periods=1).mean()
         signals["volume_std"] = signals["volume"].rolling(self.volume_lookback, min_periods=1).std()
         signals["volume_trend"] = signals["volume"] / signals["volume_ma"]
-        signals["volume_confirm"] = (signals["volume"] > signals["volume_ma"])  # Simplified volume confirmation
+        signals["volume_confirm"] = (signals["volume"] > signals["volume_ma"])
 
         # Trend Analysis
         signals["short_ma"] = signals["close"].ewm(span=self.lookback//2, min_periods=1).mean()
@@ -151,17 +149,17 @@ class BreakoutStrategy:
         signals["buy_signal"] = (
             signals["donchian_breach_upper"] &
             (signals["close"] > signals["vwap"]) &
-            (signals["rsi"] > 30) &  # More permissive RSI
-            (signals["rc_signal"] > -self.rc_threshold) &  # More permissive RC signal
-            (signals["volume"] > signals["volume_ma"])  # Simplified volume condition
+            (signals["rsi"] > 30) &  
+            (signals["rc_signal"] > -self.rc_threshold) & 
+            (signals["volume"] > signals["volume_ma"]) 
         )
 
         signals["sell_signal"] = (
             signals["donchian_breach_lower"] &
             (signals["close"] < signals["vwap"]) &
-            (signals["rsi"] < 70) &  # More permissive RSI
-            (signals["rc_signal"] < self.rc_threshold) &  # More permissive RC signal
-            (signals["volume"] > signals["volume_ma"])  # Simplified volume condition
+            (signals["rsi"] < 70) &  
+            (signals["rc_signal"] < self.rc_threshold) & 
+            (signals["volume"] > signals["volume_ma"])
         )
 
         # Stop-loss and Take-profit using ATR
