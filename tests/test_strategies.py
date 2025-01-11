@@ -80,10 +80,13 @@ def test_breakout_signals(synthetic_data):
     strategy = BreakoutStrategy(base_lookback=5, rsi_lookback=5, volume_lookback=5, rc_threshold=1.35, pivot_window=5)
 
     signals = strategy.generate_signals(synthetic_data, timeframe="1min")
+    # signals.to_csv("dummy_breakout_signals.csv")  # handy for manual check and debug
 
-    expected_buy_timestamps = [pd.Timestamp('2023-01-01 00:06:00'), pd.Timestamp('2023-01-01 00:09:00'), pd.Timestamp('2023-01-01 00:11:00'),pd.Timestamp('2023-01-01 00:13:00'),pd.Timestamp('2023-01-01 00:14:00')]
-    expected_sell_timestamps = [pd.Timestamp('2023-01-01 00:32:00'), pd.Timestamp('2023-01-01 00:33:00')]
-
+    expected_buy_timestamps = [pd.Timestamp('2023-01-01 00:13:00'),
+                               pd.Timestamp('2023-01-01 00:14:00'),
+                               pd.Timestamp('2023-01-01 00:15:00')]
+    expected_sell_timestamps = []  # no strong sell signals in the synthetic data TODO: parametrize more scenarios
+ 
     buy_timestamps = signals[signals["buy_signal"]].index.tolist()
     sell_timestamps = signals[signals["sell_signal"]].index.tolist()
 
@@ -91,9 +94,9 @@ def test_breakout_signals(synthetic_data):
     assert buy_timestamps == expected_buy_timestamps, f"Unexpected buy signals: {buy_timestamps}"
     assert sell_timestamps == expected_sell_timestamps, f"Unexpected sell signals: {sell_timestamps}"
 
-    # Check volume confirmation
-    # assert all(signals.loc[buy_timestamps, "strong_volume"]), "Buy signals lack volume confirmation."
-    # assert all(signals.loc[sell_timestamps, "strong_volume"]), "Sell signals lack volume confirmation."
+    # Check volume confirmation at the point of buy/sell signals
+    assert all(signals.loc[buy_timestamps, "strong_volume"]), "Buy signals lack volume confirmation."
+    assert all(signals.loc[sell_timestamps, "strong_volume"]), "Sell signals lack volume confirmation."
 
 
 def test_no_signals_on_stable_data():
@@ -189,5 +192,5 @@ def plot_synthetic_data_with_metrics():
 
 
 if __name__ == "__main__":
-    # run the file to see / test plots
+    # run the file to see / test plots - just for a quick check
     plot_synthetic_data_with_metrics()

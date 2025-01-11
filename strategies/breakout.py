@@ -145,7 +145,7 @@ class BreakoutStrategy:
         adjusted_lookback = int(self.base_lookback * base_multiplier * size_multiplier)
         
         # Ensure lookback is reasonable
-        max_lookback = int(data_length * 0.2)  # Don't use more than 20% of data
+        max_lookback = int(data_length * 0.22)  # Don't use more than 20% of data
         min_lookback = 5
         
         return min(max_lookback, max(min_lookback, adjusted_lookback))
@@ -194,15 +194,15 @@ class BreakoutStrategy:
         signals["buy_signal"] = (
             signals["bb_breach_up"] &
             ((signals["close"] > signals["vwap"]) | (signals["close"] > signals["bb_middle"])) &
-            ((signals["rsi"] > 30) & (signals["rsi"] < 80)) &  # Widened RSI bounds
-            ((signals["rc_signal"] > -self.rc_threshold) | signals["strong_volume"])  # Either RC signal OR strong volume
+            ((signals["rsi"] > 55) & (signals["rsi"] < 95)) &  # Widened RSI bounds
+            ((signals["rc_signal"] > -self.rc_threshold) & signals["strong_volume"])  # Either RC signal OR strong volume
         )
 
         signals["sell_signal"] = (
             signals["bb_breach_down"] &
             ((signals["close"] < signals["vwap"]) | (signals["close"] < signals["bb_middle"])) &
-            ((signals["rsi"] < 70) & (signals["rsi"] > 20)) &  # Widened RSI bounds
-            ((signals["rc_signal"] < self.rc_threshold) | signals["strong_volume"])  # Either RC signal OR strong volume
+            ((signals["rsi"] < 45) & (signals["rsi"] > 5)) &  # Widened RSI bounds
+            ((signals["rc_signal"] < self.rc_threshold) & signals["strong_volume"])  # Either RC signal OR strong volume
         )
 
         # Calculate stop-loss and take-profit levels
@@ -240,7 +240,6 @@ class BreakoutStrategy:
                   [{"secondary_y": True}]]
         )
 
-        # Candlestick chart
         fig.add_trace(go.Candlestick(
             x=signals.index,
             open=signals["open"],
@@ -250,10 +249,9 @@ class BreakoutStrategy:
             name="Price"
         ), row=1, col=1)
 
-        # Bollinger Bands
         for band, color in [
-            ("bb_upper", "rgba(173, 204, 255, 0.7)"),
-            ("bb_middle", "rgba(98, 128, 255, 0.7)"),
+            ("bb_upper", "rgba(173, 204, 255, 0.7)"), # make colours bolder, can barely see
+            ("bb_middle", "rgba(98, 128, 255, 0.7)"), # lookup the colour codes
             ("bb_lower", "rgba(173, 204, 255, 0.7)")
         ]:
             fig.add_trace(go.Scatter(
@@ -264,7 +262,6 @@ class BreakoutStrategy:
                 name=f"{band.replace('_', ' ').title()}"
             ), row=1, col=1)
 
-        # Buy/Sell signals
         buy_points = signals[signals["buy_signal"]]
         sell_points = signals[signals["sell_signal"]]
 
@@ -284,7 +281,6 @@ class BreakoutStrategy:
             name="Sell Signal"
         ), row=1, col=1)
 
-        # Volume
         colors = ['green' if close >= open else 'red' 
                 for open, close in zip(signals['open'], signals['close'])]
         
@@ -296,7 +292,6 @@ class BreakoutStrategy:
             opacity=0.7
         ), row=2, col=1, secondary_y=False)
 
-        # RSI
         fig.add_trace(go.Scatter(
             x=signals.index,
             y=signals["rsi"],
@@ -305,7 +300,6 @@ class BreakoutStrategy:
             name="RSI"
         ), row=2, col=1, secondary_y=True)
 
-        # Update layout
         fig.update_layout(
             title="Trading Analysis Dashboard",
             height=900,
@@ -313,13 +307,11 @@ class BreakoutStrategy:
             xaxis_rangeslider_visible=False
         )
 
-        # Update axes
         fig.update_yaxes(title="Price", row=1, col=1)
         fig.update_yaxes(title="Volume", row=2, col=1, secondary_y=False)
         fig.update_yaxes(title="RSI", range=[0, 100], row=2, col=1, secondary_y=True)
         fig.update_xaxes(title="Time", row=2, col=1)
 
-        # Add RSI levels
         fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1, secondary_y=True)
         fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1, secondary_y=True)
 

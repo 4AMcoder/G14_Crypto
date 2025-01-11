@@ -228,7 +228,6 @@ class MeanReversionStrategy:
                   [{"secondary_y": True}]]
         )
 
-        # Candlestick chart
         fig.add_trace(go.Candlestick(
             x=signals.index,
             open=signals["open"],
@@ -238,9 +237,9 @@ class MeanReversionStrategy:
             name="Price"
         ), row=1, col=1)
 
-        # Bollinger Bands
+
         for band, color in [
-            ("bb_upper", "rgba(173, 204, 255, 0.7)"),
+            ("bb_upper", "rgba(173, 204, 255, 0.7)"), # TODO: change these colours aswell very faint
             ("bb_middle", "rgba(98, 128, 255, 0.7)"),
             ("bb_lower", "rgba(173, 204, 255, 0.7)")
         ]:
@@ -252,7 +251,6 @@ class MeanReversionStrategy:
                 name=f"{band.replace('_', ' ').title()}"
             ), row=1, col=1)
 
-        # Buy/Sell signals
         buy_points = signals[signals["buy_signal"]]
         sell_points = signals[signals["sell_signal"]]
 
@@ -272,7 +270,6 @@ class MeanReversionStrategy:
             name="Sell Signal"
         ), row=1, col=1)
 
-        # Volume
         colors = ['green' if close >= open else 'red' 
                 for open, close in zip(signals['open'], signals['close'])]
         
@@ -284,7 +281,6 @@ class MeanReversionStrategy:
             opacity=0.7
         ), row=2, col=1, secondary_y=False)
 
-        # RSI
         fig.add_trace(go.Scatter(
             x=signals.index,
             y=signals["rsi"],
@@ -293,7 +289,6 @@ class MeanReversionStrategy:
             name="RSI"
         ), row=2, col=1, secondary_y=True)
 
-        # Update layout
         fig.update_layout(
             title="Mean Reversion Analysis Dashboard",
             height=900,
@@ -301,13 +296,11 @@ class MeanReversionStrategy:
             xaxis_rangeslider_visible=False
         )
 
-        # Update axes
         fig.update_yaxes(title="Price", row=1, col=1)
         fig.update_yaxes(title="Volume", row=2, col=1, secondary_y=False)
         fig.update_yaxes(title="RSI", range=[0, 100], row=2, col=1, secondary_y=True)
         fig.update_xaxes(title="Time", row=2, col=1)
 
-        # Add RSI levels
         fig.add_hline(y=self.rsi_overbought, line_dash="dash", line_color="green", row=2, col=1, secondary_y=True)
         fig.add_hline(y=self.rsi_oversold, line_dash="dash", line_color="red", row=2, col=1, secondary_y=True)
 
