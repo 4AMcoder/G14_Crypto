@@ -2,3 +2,4 @@
 /data/raw/*
 *.pyc
 __pycache__/
+/.vscode/
