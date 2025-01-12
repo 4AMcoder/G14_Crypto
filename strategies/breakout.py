@@ -9,8 +9,8 @@ class BreakoutStrategy:
         self,
         base_lookback: int = 20,
         buffer: float = 0.001,
-        stop_loss_factor: float = 1.0,
-        take_profit_factor: float = 2.0,
+        stop_loss_factor: float = 2.0,
+        take_profit_factor: float = 5.0,
         rsi_lookback: int = 20,  
         volume_lookback: int = 20, 
         rc_threshold: float = 0.5, 
@@ -115,18 +115,17 @@ class BreakoutStrategy:
         return vwap
 
     def calculate_position_size(self, data: pd.DataFrame, lookback: int) -> pd.Series:
-        """Calculate dynamic position size based on volatility"""
+        """Calculate dynamic position size based on volatility with the idea that higher volatility = smaller position size"""
         atr = self.calculate_atr(data)
         avg_atr = atr.rolling(window=lookback).mean()
         
         # Normalize ATR to get relative volatility
         rel_vol = atr / avg_atr
         
-        # Scale position size inversely with volatility (higher vol = smaller position)
         pos_size = 1 / rel_vol
         
-        # Normalize between 0.1 and 1.0
-        pos_size = pos_size.clip(0.1, 1.0)
+        # Normalize between 0.25 and 1.0 of allowed position
+        pos_size = pos_size.clip(0.25, 1.0)
         
         return pos_size
 
@@ -145,7 +144,7 @@ class BreakoutStrategy:
         adjusted_lookback = int(self.base_lookback * base_multiplier * size_multiplier)
         
         # Ensure lookback is reasonable
-        max_lookback = int(data_length * 0.22)  # Don't use more than 20% of data
+        max_lookback = int(data_length * 0.25)  # Don't use more than 25% of data
         min_lookback = 5
         
         return min(max_lookback, max(min_lookback, adjusted_lookback))
@@ -194,14 +193,14 @@ class BreakoutStrategy:
         signals["buy_signal"] = (
             signals["bb_breach_up"] &
             ((signals["close"] > signals["vwap"]) | (signals["close"] > signals["bb_middle"])) &
-            ((signals["rsi"] > 55) & (signals["rsi"] < 95)) &  # Widened RSI bounds
+            ((signals["rsi"] > 40) & (signals["rsi"] < 75)) &  # Widened RSI bounds
             ((signals["rc_signal"] > -self.rc_threshold) & signals["strong_volume"])  # Either RC signal OR strong volume
         )
 
         signals["sell_signal"] = (
             signals["bb_breach_down"] &
             ((signals["close"] < signals["vwap"]) | (signals["close"] < signals["bb_middle"])) &
-            ((signals["rsi"] < 45) & (signals["rsi"] > 5)) &  # Widened RSI bounds
+            ((signals["rsi"] < 60) & (signals["rsi"] > 25)) &  # Widened RSI bounds
             ((signals["rc_signal"] < self.rc_threshold) & signals["strong_volume"])  # Either RC signal OR strong volume
         )
 

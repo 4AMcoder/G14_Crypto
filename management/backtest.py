@@ -74,10 +74,39 @@ class EnhancedBacktest:
         self.positions: List[Position] = []
         self.trades: List[Trade] = []
         self.equity_curve = []
-        self.signals = None # to retain dataframe for plotting
+        self.signals = None
         
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
+
+    def _get_position_exposure(self) -> Dict[str, float]:
+        """Calculate current position exposure by side"""
+        exposure = {'long': 0.0, 'short': 0.0}
+        for position in self.positions:
+            exposure[position.side] += position.size
+        return exposure
+
+    def _can_open_position(self, side: str, price: float) -> bool:
+        """Check if a new position can be opened"""
+        # Check max positions limit
+        if len(self.positions) >= self.max_positions:
+            return False
+
+        # Calculate current exposure
+        exposure = self._get_position_exposure()
+        
+        # Don't allow opposite positions
+        if side == 'long' and exposure['short'] > 0:
+            return False
+        if side == 'short' and exposure['long'] > 0:
+            return False
+        
+        # Check if we have enough capital
+        position_size = self._calculate_position_size(price)
+        position_value = position_size * price
+        commission = self._calculate_commission(position_value)
+        
+        return position_value + commission <= self.capital
 
     def _calculate_position_size(self, price: float) -> float:
         """Calculate position size based on current capital and position size percentage"""
@@ -113,10 +142,12 @@ class EnhancedBacktest:
 
     def _open_position(self, row: pd.Series, side: str) -> None:
         """Open a new position"""
-        if len(self.positions) >= self.max_positions:
+        price = self._apply_slippage(row['close'], side)
+        
+        # Check if we can open a new position
+        if not self._can_open_position(side, price):
             return
 
-        price = self._apply_slippage(row['close'], side)
         size = self._calculate_position_size(price)
         position_value = size * price
         commission = self._calculate_commission(position_value)
@@ -132,7 +163,7 @@ class EnhancedBacktest:
             entry_price=price,
             size=size,
             side=side,
-            entry_time=row.name if isinstance(row.name, datetime) else pd.to_datetime(row.name),  # Handle timestamp conversion
+            entry_time=row.name if isinstance(row.name, datetime) else pd.to_datetime(row.name),
             stop_loss=row['stop_loss'],
             take_profit=row['take_profit']
         )
@@ -157,7 +188,6 @@ class EnhancedBacktest:
         # Update capital. dont forget commission + fees here
         self.capital += position_value - commission
         
-        # Record trade
         trade = Trade(
             entry_time=position.entry_time,
             exit_time=timestamp,
@@ -186,7 +216,7 @@ class EnhancedBacktest:
     def run(self) -> Dict:
         """Run backtest"""
         self.logger.info("Starting backtest...")
-        self.signals = self.strategy.generate_signals(self.data)  # Store signals as instance variable
+        self.signals = self.strategy.generate_signals(self.data)
         
         self.equity_curve = []
         
@@ -258,7 +288,7 @@ class EnhancedBacktest:
             "sharpe_ratio": sharpe_ratio,
             "equity_curve": self.equity_curve
         }
-    
+
     def plot_results(self) -> None:
         """Plot equity curve and drawdown"""
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), gridspec_kw={'height_ratios': [2, 1]})

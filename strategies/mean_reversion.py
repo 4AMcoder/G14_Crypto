@@ -15,7 +15,7 @@ class MeanReversionStrategy:
         volume_lookback: int = 20,
         volume_threshold: float = 1.5,
         stop_loss_factor: float = 2.0,
-        take_profit_factor: float = 1.5,
+        take_profit_factor: float = 3.5,
         zscore_threshold: float = 2.0,
         mean_period: int = 20,
         timeframe_adjustments: dict = None

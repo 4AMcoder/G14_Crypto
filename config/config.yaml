@@ -7,28 +7,6 @@ trading_pairs:
   - ADAUSD
   - SOLUSD
 
-# Strategy configuration
-strategies:
-  mean_reversion:
-    lookback: 20
-    threshold: 0.02
-  momentum:
-    lookback: 10
-  breakout:
-    lookback: 20
-    buffer: 0.001
-
-# Risk management
-risk_management:
-  max_drawdown: 0.2
-  max_risk_per_trade: 0.01
-
-# Scheduler configuration (all in seconds)
-scheduler_intervals:
-  fetch_market_data: 60      
-  run_strategy: 300           
-  monitor_portfolio: 180       
-
 # url configuration
 api:
   rest_api_url: https://api.kraken.com/0
