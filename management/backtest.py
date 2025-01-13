@@ -10,6 +10,8 @@ from strategies.mean_reversion import MeanReversionStrategy
 from utils.historical_data_loader import load_specific_csv_from_zip
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import matplotlib.pyplot as plt
+from utils.logger import setup_logger, get_logger
+import itertools
 
 
 @dataclass
@@ -66,6 +68,7 @@ class EnhancedBacktest:
         self.enable_fractional = enable_fractional
         self.commission_pct = commission_pct
         self.slippage_pct = slippage_pct
+        self.logger = get_logger("trading_bot.backtest")
         
         self._validate_data(data)
         
@@ -75,9 +78,6 @@ class EnhancedBacktest:
         self.trades: List[Trade] = []
         self.equity_curve = []
         self.signals = None
-        
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
 
     def _get_position_exposure(self) -> Dict[str, float]:
         """Calculate current position exposure by side"""
@@ -311,64 +311,143 @@ class EnhancedBacktest:
         plt.tight_layout()
         plt.show()
 
-def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocation_pct=0.25, plot=False):
-    """Run the backtest for a single file."""
+# def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocation_pct=0.33, plot=False):
+#     """Run the backtest for a single file."""
+#     data_dict = load_specific_csv_from_zip(zip_path, [file_name])
+#     data = data_dict.get(file_name)
+    
+#     if data is None:
+#         raise ValueError(f"Failed to load data for {file_name}")
+
+#     # TODO: need a better way to switch between strategies rather than uncommenting
+#     breakout_strategy = BreakoutStrategy(base_lookback=25, buffer=0.0025, rsi_lookback=25, volume_lookback=25, stop_loss_factor=1.25,
+#     take_profit_factor=2.5, timeframe_adjustments={'30min': 0.9}, volume_multiplier=0.2)
+#     # mean_reversion_strategy = MeanReversionStrategy(base_lookback=20, rsi_lookback=20, volume_lookback=20,timeframe_adjustments={'720min': 1.5})
+    
+#     backtest = EnhancedBacktest(
+#         data=data,
+#         strategy=breakout_strategy,
+#         # strategy=mean_reversion_strategy,
+#         initial_capital=initial_cash,
+#         position_size_pct=max_allocation_pct,
+#         commission_pct=0.001, 
+#         slippage_pct=0.002  
+#     )
+
+#     results = backtest.run()
+
+#     if plot:
+#         backtest.plot_results()
+#         breakout_strategy.plot_signals(results['signals'])  # Use signals from results
+#         # mean_reversion_strategy.plot_signals(results['signals'])
+
+#     return {
+#         "file_name": file_name,
+#         "metrics": results,
+#         "trades": backtest.trades
+#     }
+
+
+def optimize_strategy_parameters(
+    file_name: str,
+    zip_path: str,
+    strategy_type: str = 'breakout',
+    optimize: bool = False,
+    initial_cash: float = 10000,
+    max_allocation_pct: float = 0.33,  # Added back
+    plot: bool = False
+) -> dict:
+    """Run backtest with optional parameter optimization."""
     data_dict = load_specific_csv_from_zip(zip_path, [file_name])
     data = data_dict.get(file_name)
     
-    if data is None:
-        raise ValueError(f"Failed to load data for {file_name}")
-
-    # TODO: need a better way to switch between strategies rather than uncommenting
-    # breakout_strategy = BreakoutStrategy(base_lookback=10, buffer=0.001, rsi_lookback=10, volume_lookback=10)
-    mean_reversion_strategy = MeanReversionStrategy(base_lookback=20, rsi_lookback=20, volume_lookback=20)
+    if not optimize:
+        # Regular backtest with default parameters
+        breakout_strategy = BreakoutStrategy(lookback=25, buffer=0.0025, stop_loss_factor=1.25,
+        take_profit_factor=2.5, timeframe_adjustments={'30min': 0.9}, volume_multiplier=0.2)
+        # mean_reversion_strategy = MeanReversionStrategy(base_lookback=20, rsi_lookback=20, volume_lookback=20,timeframe_adjustments={'720min': 1.5})
+        backtest = EnhancedBacktest(
+            data=data,
+            strategy=breakout_strategy,
+            # strategy=mean_reversion_strategy,
+            initial_capital=initial_cash,
+            position_size_pct=max_allocation_pct 
+        )
+        results = backtest.run()
+        
+        if plot:
+            backtest.plot_results()
+            breakout_strategy.plot_signals(results['signals'])  # Use signals from results
+            # mean_reversion_strategy.plot_signals(results['signals'])
+            
+        return {
+            "file_name": file_name,
+            "metrics": results,
+            "trades": backtest.trades,
+            "parameters": strategy.__dict__
+        }
     
-    backtest = EnhancedBacktest(
-        data=data,
-        # strategy=breakout_strategy,
-        strategy=mean_reversion_strategy,
-        initial_capital=initial_cash,
-        position_size_pct=max_allocation_pct,
-        commission_pct=0.001, 
-        slippage_pct=0.002  
-    )
+    else:
+        # Define parameter ranges for optimization
+        param_ranges = {
+            'lookback': range(10, 31, 5),
+            'buffer': [0.001, 0.002, 0.003],
+            'stop_loss_factor': [1.0, 1.25, 1.5],
+            'take_profit_factor': [2.0, 2.5, 3.0],
+            'volume_multiplier': [0.1, 0.15, 0.2],
+            'position_size_pct': [0.15, 0.25, 0.33]  # Added position size to optimization
+        }
+        
+        best_sharpe = -np.inf
+        best_params = None
+        best_results = None
+        
+        param_combinations = [dict(zip(param_ranges.keys(), v)) 
+                            for v in itertools.product(*param_ranges.values())]
+        
+        for params in tqdm(param_combinations, desc="Optimizing parameters"):
+            # Extract position_size_pct from params
+            pos_size = params.pop('position_size_pct')  # Remove from strategy params
+            
+            strategy = BreakoutStrategy(**params)
+            backtest = EnhancedBacktest(
+                data=data,
+                strategy=strategy,
+                initial_capital=initial_cash,
+                position_size_pct=pos_size  # Use in backtest initialization
+            )
+            results = backtest.run()
+            
+            if results['sharpe_ratio'] > best_sharpe:
+                best_sharpe = results['sharpe_ratio']
+                best_params = {**params, 'position_size_pct': pos_size}  # Include in best params
+                best_results = results
 
-    results = backtest.run()
-
-    if plot:
-        backtest.plot_results()
-        # breakout_strategy.plot_signals(results['signals'])  # Use signals from results
-        mean_reversion_strategy.plot_signals(results['signals'])
-
-    return {
-        "file_name": file_name,
-        "metrics": results,
-        "trades": backtest.trades
-    }
-
-
+# Modified main execution
 if __name__ == "__main__":
     ZIP_PATH = "data/raw/Kraken_OHLCVT.zip"
-    files_to_test = ["XBTUSD_240.csv"]
-
+    files_to_test = ["ETHGBP_30.csv"]
+    
+    # Run with optimization
     results = []
-    with ThreadPoolExecutor() as executor:
-        futures = [
-            executor.submit(
-                run_backtest_for_file, 
-                file_name, 
-                ZIP_PATH, 
-                plot=True
-            ) for file_name in files_to_test
-        ]
-        
-        for future in as_completed(futures):
-            results.append(future.result())
-
+    for file_name in files_to_test:
+        result = optimize_strategy_parameters(
+            file_name=file_name,
+            zip_path=ZIP_PATH,
+            optimize=True,  # Set to True to run optimization
+            max_allocation_pct=0.33,
+            plot=True
+        )
+        results.append(result)
+    
+    # Print results
     for result in results:
         print(f"\nResults for {result['file_name']}:")
-        print("Metrics:")
+        if 'best_parameters' in result:
+            print("\nBest Parameters Found:")
+            for param, value in result['best_parameters'].items():
+                print(f"  {param}: {value}")
+        print("\nMetrics:")
         for metric, value in result['metrics'].items():
-            if metric not in ['equity_curve', 'signals']:  # Skip equity_curve and signals in printing
+            if metric not in ['equity_curve', 'signals']:
                 print(f"  {metric}: {value}")
-        print(f"Total trades executed: {len(result['trades'])}")

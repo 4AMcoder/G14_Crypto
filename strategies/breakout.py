@@ -3,14 +3,16 @@ import numpy as np
 from typing import Optional, Tuple
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from utils.logger import get_logger
 
 class BreakoutStrategy:
     def __init__(
         self,
+        lookback: int = 20,
         base_lookback: int = 20,
         buffer: float = 0.001,
-        stop_loss_factor: float = 2.0,
-        take_profit_factor: float = 5.0,
+        stop_loss_factor: float = 1.25,
+        take_profit_factor: float = 2.75,
         rsi_lookback: int = 20,  
         volume_lookback: int = 20, 
         rc_threshold: float = 0.5, 
@@ -20,17 +22,19 @@ class BreakoutStrategy:
         bb_std: float = 2.0,
         timeframe_adjustments: dict = None
     ):
-        self.base_lookback = base_lookback
+        self.lookback = lookback
+        self.base_lookback = lookback
         self.buffer = buffer
         self.stop_loss_factor = stop_loss_factor
         self.take_profit_factor = take_profit_factor
-        self.rsi_lookback = rsi_lookback
-        self.volume_lookback = volume_lookback
+        self.rsi_lookback = lookback
+        self.volume_lookback = lookback
         self.rc_threshold = rc_threshold
         self.volume_multiplier = volume_multiplier
         self.pivot_window = pivot_window
         self.breakout_threshold = breakout_threshold
         self.bb_std = bb_std
+        self.logger = get_logger("trading_bot.strategy")
         
         # Default timeframe adjustments if none provided
         self.timeframe_adjustments = timeframe_adjustments or {
@@ -125,7 +129,7 @@ class BreakoutStrategy:
         pos_size = 1 / rel_vol
         
         # Normalize between 0.25 and 1.0 of allowed position
-        pos_size = pos_size.clip(0.25, 1.0)
+        pos_size = pos_size.clip(0.20, 1.0)
         
         return pos_size
 
@@ -193,15 +197,15 @@ class BreakoutStrategy:
         signals["buy_signal"] = (
             signals["bb_breach_up"] &
             ((signals["close"] > signals["vwap"]) | (signals["close"] > signals["bb_middle"])) &
-            ((signals["rsi"] > 40) & (signals["rsi"] < 75)) &  # Widened RSI bounds
-            ((signals["rc_signal"] > -self.rc_threshold) & signals["strong_volume"])  # Either RC signal OR strong volume
+            ((signals["rsi"] > 35) & (signals["rsi"] < 75)) &  # Widened RSI bounds
+            ((signals["rc_signal"] > -self.rc_threshold) | signals["strong_volume"])  # Either RC signal OR strong volume
         )
 
         signals["sell_signal"] = (
             signals["bb_breach_down"] &
             ((signals["close"] < signals["vwap"]) | (signals["close"] < signals["bb_middle"])) &
-            ((signals["rsi"] < 60) & (signals["rsi"] > 25)) &  # Widened RSI bounds
-            ((signals["rc_signal"] < self.rc_threshold) & signals["strong_volume"])  # Either RC signal OR strong volume
+            ((signals["rsi"] < 65) & (signals["rsi"] > 25)) &  # Widened RSI bounds
+            ((signals["rc_signal"] < self.rc_threshold) | signals["strong_volume"])  # Either RC signal OR strong volume
         )
 
         # Calculate stop-loss and take-profit levels

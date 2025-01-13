@@ -3,6 +3,7 @@ import numpy as np
 from typing import Optional, Tuple
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from utils.logger import get_logger
 
 class MeanReversionStrategy:
     def __init__(
@@ -31,6 +32,7 @@ class MeanReversionStrategy:
         self.take_profit_factor = take_profit_factor
         self.zscore_threshold = zscore_threshold
         self.mean_period = mean_period
+        self.logger = get_logger("trading_bot.strategy")
         
         # Default timeframe adjustments if none provided
         self.timeframe_adjustments = timeframe_adjustments or {
