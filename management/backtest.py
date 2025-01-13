@@ -69,6 +69,7 @@ class EnhancedBacktest:
         self.commission_pct = commission_pct
         self.slippage_pct = slippage_pct
         self.logger = get_logger("trading_bot.backtest")
+        self.logger.info("Backtest logger initialized")
         
         self._validate_data(data)
         
@@ -144,7 +145,6 @@ class EnhancedBacktest:
         """Open a new position"""
         price = self._apply_slippage(row['close'], side)
         
-        # Check if we can open a new position
         if not self._can_open_position(side, price):
             return
 
@@ -177,7 +177,6 @@ class EnhancedBacktest:
         position_value = position.size * exit_price
         commission = self._calculate_commission(position_value)
         
-        # Calculate PnL
         if position.side == 'long':
             pnl = position.size * (exit_price - position.entry_price) - commission
         else:
@@ -221,7 +220,6 @@ class EnhancedBacktest:
         self.equity_curve = []
         
         for timestamp, row in tqdm(self.signals.iterrows(), total=len(self.signals)):            
-            # Check stop-loss and take-profit for existing positions
             self._check_stop_loss_take_profit(row, timestamp)
             
             # Process entry signals
@@ -347,44 +345,46 @@ class EnhancedBacktest:
 #         "trades": backtest.trades
 #     }
 
-
 def optimize_strategy_parameters(
     file_name: str,
     zip_path: str,
-    strategy_type: str = 'breakout',
     optimize: bool = False,
     initial_cash: float = 10000,
-    max_allocation_pct: float = 0.33,  # Added back
-    plot: bool = False
+    max_allocation_pct: float = 0.33,
+    plot: bool = False,
+    n_jobs: int = 5
 ) -> dict:
     """Run backtest with optional parameter optimization."""
     data_dict = load_specific_csv_from_zip(zip_path, [file_name])
     data = data_dict.get(file_name)
     
     if not optimize:
-        # Regular backtest with default parameters
-        breakout_strategy = BreakoutStrategy(lookback=25, buffer=0.0025, stop_loss_factor=1.25,
-        take_profit_factor=2.5, timeframe_adjustments={'30min': 0.9}, volume_multiplier=0.2)
-        # mean_reversion_strategy = MeanReversionStrategy(base_lookback=20, rsi_lookback=20, volume_lookback=20,timeframe_adjustments={'720min': 1.5})
+        # use defaults when not optimizing
+        strategy = BreakoutStrategy()
+        # strategy = MeanReversionStrategy()
         backtest = EnhancedBacktest(
             data=data,
-            strategy=breakout_strategy,
-            # strategy=mean_reversion_strategy,
+            strategy=strategy,
             initial_capital=initial_cash,
-            position_size_pct=max_allocation_pct 
+            position_size_pct=max_allocation_pct
         )
         results = backtest.run()
         
         if plot:
             backtest.plot_results()
-            breakout_strategy.plot_signals(results['signals'])  # Use signals from results
-            # mean_reversion_strategy.plot_signals(results['signals'])
+            strategy.plot_signals(results['signals'])
+        
+        # Filter strategy parameters to include only serializable values
+        strategy_params = {
+            k: v for k, v in strategy.__dict__.items() 
+            if isinstance(v, (int, float, str, bool, dict, list))
+        }
             
         return {
             "file_name": file_name,
             "metrics": results,
             "trades": backtest.trades,
-            "parameters": strategy.__dict__
+            "parameters": strategy_params
         }
     
     else:
@@ -395,52 +395,91 @@ def optimize_strategy_parameters(
             'stop_loss_factor': [1.0, 1.25, 1.5],
             'take_profit_factor': [2.0, 2.5, 3.0],
             'volume_multiplier': [0.1, 0.15, 0.2],
-            'position_size_pct': [0.15, 0.25, 0.33]  # Added position size to optimization
+            'position_size_pct': [0.15, 0.25, 0.33]
         }
         
-        best_sharpe = -np.inf
-        best_params = None
-        best_results = None
-        
+        # Generate parameter combinations - might trim this down to a smaller set
         param_combinations = [dict(zip(param_ranges.keys(), v)) 
                             for v in itertools.product(*param_ranges.values())]
-        
-        for params in tqdm(param_combinations, desc="Optimizing parameters"):
-            # Extract position_size_pct from params
-            pos_size = params.pop('position_size_pct')  # Remove from strategy params
-            
+
+        def evaluate_params(params):
+            """Evaluate a single parameter combination"""
+            pos_size = params.pop('position_size_pct')
             strategy = BreakoutStrategy(**params)
             backtest = EnhancedBacktest(
                 data=data,
                 strategy=strategy,
                 initial_capital=initial_cash,
-                position_size_pct=pos_size  # Use in backtest initialization
+                position_size_pct=pos_size
             )
             results = backtest.run()
-            
-            if results['sharpe_ratio'] > best_sharpe:
-                best_sharpe = results['sharpe_ratio']
-                best_params = {**params, 'position_size_pct': pos_size}  # Include in best params
-                best_results = results
+            params['position_size_pct'] = pos_size  # Add back for results
+            return {
+                'params': params,
+                'results': results,
+                'sharpe': results['sharpe_ratio']
+            }
 
-# Modified main execution
+        # Run optimization in parallel - takes around 30 min on current params
+        with ThreadPoolExecutor(max_workers=n_jobs if n_jobs > 0 else None) as executor:
+            evaluations = list(tqdm(
+                executor.map(evaluate_params, param_combinations),
+                total=len(param_combinations),
+                desc="Optimizing parameters"
+            ))
+        
+        best_evaluation = max(evaluations, key=lambda x: x['sharpe'])
+        best_params = best_evaluation['params']
+        best_results = best_evaluation['results']
+        
+        if plot:
+            # just use best params and plot that one
+            strategy_params = {k: v for k, v in best_params.items() 
+                             if k != 'position_size_pct'}
+            best_strategy = BreakoutStrategy(**strategy_params)
+            best_backtest = EnhancedBacktest(
+                data=data,
+                strategy=best_strategy,
+                initial_capital=initial_cash,
+                position_size_pct=best_params['position_size_pct']
+            )
+            final_results = best_backtest.run()
+            best_backtest.plot_results()
+            best_strategy.plot_signals(final_results['signals'])
+        
+        return {
+            "file_name": file_name,
+            "metrics": best_results,
+            "best_parameters": best_params,
+            "optimization_results": {
+                "parameters_tested": len(param_combinations),
+                "best_sharpe": best_evaluation['sharpe']
+            }
+        }
+
 if __name__ == "__main__":
+
+    logger = setup_logger(
+    name="trading_bot",
+    config_path="config/logging_config.yaml",
+    default_level=logging.INFO
+)
+
     ZIP_PATH = "data/raw/Kraken_OHLCVT.zip"
     files_to_test = ["ETHGBP_30.csv"]
     
-    # Run with optimization
     results = []
     for file_name in files_to_test:
         result = optimize_strategy_parameters(
             file_name=file_name,
             zip_path=ZIP_PATH,
-            optimize=True,  # Set to True to run optimization
+            optimize=True,
             max_allocation_pct=0.33,
-            plot=True
+            plot=False,
+            n_jobs=5 
         )
         results.append(result)
     
-    # Print results
     for result in results:
         print(f"\nResults for {result['file_name']}:")
         if 'best_parameters' in result:
