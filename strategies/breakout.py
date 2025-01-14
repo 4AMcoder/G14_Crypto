@@ -8,7 +8,7 @@ from utils.logger import get_logger
 class BreakoutStrategy:
     def __init__(
         self,
-        lookback: int = 20,
+        lookback: int = 30,
         base_lookback: int = 20,
         buffer: float = 0.001,
         stop_loss_factor: float = 1.25,

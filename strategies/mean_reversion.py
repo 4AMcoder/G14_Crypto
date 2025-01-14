@@ -34,7 +34,7 @@ class MeanReversionStrategy:
         self.mean_period = mean_period
         self.logger = get_logger("trading_bot.strategy")
         
-        # Default timeframe adjustments if none provided
+        # Default timeframe adjustments if none provided - will remove this unnecessarily complicates the df
         self.timeframe_adjustments = timeframe_adjustments or {
             '1min': 0.5,
             '5min': 0.7,
@@ -46,7 +46,7 @@ class MeanReversionStrategy:
             '1440min': 1.8,
         }
         
-        # Data size adjustments
+        # Data size adjustments - same as above
         self.data_size_adjustments = {
             1000: 1.0,
             2500: 1.2,
@@ -220,6 +220,9 @@ class MeanReversionStrategy:
 
     def plot_signals(self, signals: pd.DataFrame) -> None:
         """Plot trading signals with indicators"""
+        #TODO: add the crypto in the title, impossible to distinguish when running multiple plots 
+        # and coins. 
+
         fig = make_subplots(
             rows=2, cols=1,
             shared_xaxes=True,

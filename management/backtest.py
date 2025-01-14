@@ -12,13 +12,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import matplotlib.pyplot as plt
 from utils.logger import setup_logger, get_logger
 import itertools
+import yaml
 
 
 @dataclass
 class Position:
     entry_price: float
     size: float
-    side: str  # 'long' or 'short'
+    side: str  # note to self 'long' or 'short'
     entry_time: datetime
     stop_loss: float
     take_profit: float
@@ -33,7 +34,7 @@ class Trade:
     side: str
     pnl: float
     pnl_pct: float
-    exit_reason: str  # 'signal', 'stop_loss', 'take_profit'
+    exit_reason: str  # note to self 'signal', 'stop_loss', 'take_profit'
 
 class EnhancedBacktest:
     def _validate_data(self, data: pd.DataFrame) -> None:
@@ -89,11 +90,10 @@ class EnhancedBacktest:
 
     def _can_open_position(self, side: str, price: float) -> bool:
         """Check if a new position can be opened"""
-        # Check max positions limit
+        # Check max positions limit. note this needs adjusting alot 
         if len(self.positions) >= self.max_positions:
             return False
 
-        # Calculate current exposure
         exposure = self._get_position_exposure()
         
         # Don't allow opposite positions
@@ -222,7 +222,6 @@ class EnhancedBacktest:
         for timestamp, row in tqdm(self.signals.iterrows(), total=len(self.signals)):            
             self._check_stop_loss_take_profit(row, timestamp)
             
-            # Process entry signals
             if row['buy_signal']:
                 self._open_position(row, 'long')
             elif row['sell_signal']:
@@ -242,49 +241,108 @@ class EnhancedBacktest:
         """Generate backtest results and metrics"""
         if not self.trades:
             return {
-                "signals": self.signals,  # Include signals in results
+                "signals": self.signals,
                 "total_trades": 0,
-                "profitable_trades": 0,
-                "win_rate": 0,
-                "average_profit": 0,
-                "average_loss": 0,
-                "profit_factor": 0,
-                "total_profit": 0,
-                "max_drawdown": 0,
-                "sharpe_ratio": 0
+                "return_metrics": {},
+                "risk_metrics": {},
+                "trade_metrics": {},
+                "time_metrics": {}
             }
 
         equity_curve = pd.Series(self.equity_curve)
         returns = equity_curve.pct_change().dropna()
         
+        # Buy & Hold Return
+        buy_hold_return = ((self.data['close'].iloc[-1] - self.data['close'].iloc[0]) / 
+                        self.data['close'].iloc[0] * 100)
+        
+        # Return Metrics 
+        equity_final = self.equity
+        equity_peak = max(self.equity_curve)
+        total_return = ((self.equity - self.initial_capital) / self.initial_capital * 100)
+        
+        # Annualization factor 
+        time_diff = (self.data.index[-1] - self.data.index[0]).total_seconds()
+        ann_factor = 365 * 24 * 60 * 60 / time_diff
+        
+        ann_return = ((1 + total_return/100) ** ann_factor - 1) * 100
+        ann_volatility = returns.std() * np.sqrt(252) * 100
+        
+        # Exposure Time
+        exposure_time = sum(len(self.positions) > 0 for _ in self.data.index) / len(self.data) * 100
+        
+        # Trade Analysis
+        trade_returns = [(t.exit_price - t.entry_price) / t.entry_price * 100 if t.side == 'long'
+                        else (t.entry_price - t.exit_price) / t.entry_price * 100 for t in self.trades]
+        
         profitable_trades = sum(1 for trade in self.trades if trade.pnl > 0)
-        win_rate = profitable_trades / len(self.trades)
+        win_rate = profitable_trades / len(self.trades) * 100 if self.trades else 0
         
-        profits = [trade.pnl for trade in self.trades if trade.pnl > 0]
-        losses = [trade.pnl for trade in self.trades if trade.pnl <= 0]
+        best_trade = max(trade_returns) if trade_returns else 0
+        worst_trade = min(trade_returns) if trade_returns else 0
+        avg_trade = np.mean(trade_returns) if trade_returns else 0
         
-        average_profit = np.mean(profits) if profits else 0
-        average_loss = np.mean(losses) if losses else 0
-        profit_factor = -sum(profits) / sum(losses) if losses else float('inf')
-        
+        # Risk Metrics
         peak = equity_curve.expanding(min_periods=1).max()
-        drawdown = ((equity_curve - peak) / peak) * 100
+        drawdown = ((equity_curve - peak) / peak * 100)
         max_drawdown = drawdown.min()
+        avg_drawdown = drawdown[drawdown < 0].mean() if len(drawdown[drawdown < 0]) > 0 else 0
         
-        sharpe_ratio = np.sqrt(252) * returns.mean() / returns.std() if len(returns) > 1 else 0
+        # Advanced Risk Metrics
+        downside_returns = returns[returns < 0]
+        sortino_ratio = (returns.mean() * np.sqrt(252)) / (downside_returns.std() * np.sqrt(252)) if len(downside_returns) > 0 else 0
+        calmar_ratio = abs(ann_return / max_drawdown) if max_drawdown != 0 else 0
+        
+        # Trade Durations
+        trade_durations = [(t.exit_time - t.entry_time).total_seconds()/86400 for t in self.trades]
+        max_trade_duration = max(trade_durations) if trade_durations else 0
+        avg_trade_duration = np.mean(trade_durations) if trade_durations else 0
+        
+        # System Quality Number (SQN)
+        trade_returns_arr = np.array(trade_returns)
+        sqn = np.sqrt(len(trade_returns)) * (np.mean(trade_returns) / np.std(trade_returns)) if len(trade_returns) > 0 else 0
+        
+        # Profit Factor and Expectancy
+        gains = [r for r in trade_returns if r > 0]
+        losses = [r for r in trade_returns if r <= 0]
+        profit_factor = abs(sum(gains) / sum(losses)) if losses and sum(losses) != 0 else float('inf')
+        expectancy = (win_rate/100 * np.mean(gains) + (1-win_rate/100) * np.mean(losses)) if gains and losses else 0
         
         return {
-            "signals": self.signals,  # Include signals in results
-            "total_trades": len(self.trades),
-            "profitable_trades": profitable_trades,
-            "win_rate": win_rate,
-            "average_profit": average_profit,
-            "average_loss": average_loss,
-            "profit_factor": profit_factor,
-            "total_profit": self.equity - self.initial_capital,
-            "max_drawdown": max_drawdown,
-            "sharpe_ratio": sharpe_ratio,
-            "equity_curve": self.equity_curve
+            "signals": self.signals,
+            "return_metrics": {
+                "Equity Final [$]": round(equity_final, 2),
+                "Equity Peak [$]": round(equity_peak, 2),
+                "Return [%]": round(total_return, 2),
+                "Buy & Hold Return [%]": round(buy_hold_return, 2),
+                "Return (Ann.) [%]": round(ann_return, 2),
+                "Volatility (Ann.) [%]": round(ann_volatility, 2),
+                "Exposure Time [%]": round(exposure_time, 2)
+            },
+            "risk_metrics": {
+                "Sharpe Ratio": round(returns.mean() / returns.std() * np.sqrt(252), 2),
+                "Sortino Ratio": round(sortino_ratio, 2),
+                "Calmar Ratio": round(calmar_ratio, 2),
+                "Max. Drawdown [%]": round(abs(max_drawdown), 2),
+                "Avg. Drawdown [%]": round(abs(avg_drawdown), 2),
+                "SQN": round(sqn, 2)
+            },
+            "trade_metrics": {
+                "Total Trades": len(self.trades),
+                "Win Rate [%]": round(win_rate, 2),
+                "Best Trade [%]": round(best_trade, 2),
+                "Worst Trade [%]": round(worst_trade, 2),
+                "Avg. Trade [%]": round(avg_trade, 2),
+                "Max. Trade Duration": round(max_trade_duration, 1),
+                "Avg. Trade Duration": round(avg_trade_duration, 1),
+                "Profit Factor": round(profit_factor, 2),
+                "Expectancy [%]": round(expectancy, 2)
+            },
+            "time_metrics": {
+                "Start": self.data.index[0].strftime('%Y-%m-%d %H:%M:%S'),
+                "End": self.data.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
+                "Duration": f"{(self.data.index[-1] - self.data.index[0]).days} days"
+            }
         }
 
     def plot_results(self) -> None:
@@ -309,61 +367,68 @@ class EnhancedBacktest:
         plt.tight_layout()
         plt.show()
 
-# def run_backtest_for_file(file_name, zip_path, initial_cash=10000, max_allocation_pct=0.33, plot=False):
-#     """Run the backtest for a single file."""
-#     data_dict = load_specific_csv_from_zip(zip_path, [file_name])
-#     data = data_dict.get(file_name)
-    
-#     if data is None:
-#         raise ValueError(f"Failed to load data for {file_name}")
-
-#     # TODO: need a better way to switch between strategies rather than uncommenting
-#     breakout_strategy = BreakoutStrategy(base_lookback=25, buffer=0.0025, rsi_lookback=25, volume_lookback=25, stop_loss_factor=1.25,
-#     take_profit_factor=2.5, timeframe_adjustments={'30min': 0.9}, volume_multiplier=0.2)
-#     # mean_reversion_strategy = MeanReversionStrategy(base_lookback=20, rsi_lookback=20, volume_lookback=20,timeframe_adjustments={'720min': 1.5})
-    
-#     backtest = EnhancedBacktest(
-#         data=data,
-#         strategy=breakout_strategy,
-#         # strategy=mean_reversion_strategy,
-#         initial_capital=initial_cash,
-#         position_size_pct=max_allocation_pct,
-#         commission_pct=0.001, 
-#         slippage_pct=0.002  
-#     )
-
-#     results = backtest.run()
-
-#     if plot:
-#         backtest.plot_results()
-#         breakout_strategy.plot_signals(results['signals'])  # Use signals from results
-#         # mean_reversion_strategy.plot_signals(results['signals'])
-
-#     return {
-#         "file_name": file_name,
-#         "metrics": results,
-#         "trades": backtest.trades
-#     }
-
 def optimize_strategy_parameters(
     file_name: str,
     zip_path: str,
+    strategy_type: str = 'breakout',
     optimize: bool = False,
     initial_cash: float = 10000,
     max_allocation_pct: float = 0.33,
     plot: bool = False,
     n_jobs: int = 5
 ) -> dict:
-    """Run backtest with optional parameter optimization."""
+    """Run backtest with optional parameter optimization.
+    
+    Args:
+        file_name (str): Name of the data file
+        zip_path (str): Path to zip file containing data
+        strategy_type (str): Type of strategy to use ('breakout' or 'mean_reversion')
+        optimize (bool): Whether to run parameter optimization
+        initial_cash (float): Initial capital
+        max_allocation_pct (float): Maximum allocation percentage
+        plot (bool): Whether to plot results
+        n_jobs (int): Number of parallel jobs for optimization
+    """
     data_dict = load_specific_csv_from_zip(zip_path, [file_name])
     data = data_dict.get(file_name)
     
+    # Strategy parameter ranges for optimization - might remove in place of the yaml config
+    param_ranges = {
+        'breakout': {
+            'lookback': range(10, 31, 5),
+            'buffer': [0.001, 0.002, 0.003],
+            'stop_loss_factor': [1.0, 1.25, 1.5],
+            'take_profit_factor': [2.0, 2.5, 3.0],
+            'volume_multiplier': [0.1, 0.15, 0.2],
+            'position_size_pct': [0.15, 0.25, 0.33]
+        },
+        'mean_reversion': {
+            'base_lookback': range(10, 31, 5),
+            'std_dev_threshold': [1.5, 2.0, 2.5],
+            'rsi_lookback': [10, 14, 20],
+            'stop_loss_factor': [1.5, 2.0, 2.5],
+            'take_profit_factor': [2.5, 3.0, 3.5],
+            'volume_threshold': [1.2, 1.5, 1.8],
+            'position_size_pct': [0.15, 0.25, 0.33]
+        }
+    }
+    
+    # Strategy class mapping - will add more in future but enforce these for now
+    strategy_classes = {
+        'breakout': BreakoutStrategy,
+        'mean_reversion': MeanReversionStrategy
+    }
+
+    if strategy_type not in strategy_classes:
+        raise ValueError(f"Invalid strategy type. Must be one of {list(strategy_classes.keys())}")
+    
+    SelectedStrategy = strategy_classes[strategy_type]
+    
     if not optimize:
-        # use defaults when not optimizing
-        strategy = BreakoutStrategy()
-        # strategy = MeanReversionStrategy()
+        # Use default parameters
+        strategy = SelectedStrategy()
         backtest = EnhancedBacktest(
-            data=data,
+            data=data[-2016:],
             strategy=strategy,
             initial_capital=initial_cash,
             position_size_pct=max_allocation_pct
@@ -374,7 +439,6 @@ def optimize_strategy_parameters(
             backtest.plot_results()
             strategy.plot_signals(results['signals'])
         
-        # Filter strategy parameters to include only serializable values
         strategy_params = {
             k: v for k, v in strategy.__dict__.items() 
             if isinstance(v, (int, float, str, bool, dict, list))
@@ -382,30 +446,22 @@ def optimize_strategy_parameters(
             
         return {
             "file_name": file_name,
+            "strategy_type": strategy_type,
             "metrics": results,
             "trades": backtest.trades,
             "parameters": strategy_params
         }
     
     else:
-        # Define parameter ranges for optimization
-        param_ranges = {
-            'lookback': range(10, 31, 5),
-            'buffer': [0.001, 0.002, 0.003],
-            'stop_loss_factor': [1.0, 1.25, 1.5],
-            'take_profit_factor': [2.0, 2.5, 3.0],
-            'volume_multiplier': [0.1, 0.15, 0.2],
-            'position_size_pct': [0.15, 0.25, 0.33]
-        }
+        selected_param_ranges = param_ranges[strategy_type]
         
-        # Generate parameter combinations - might trim this down to a smaller set
-        param_combinations = [dict(zip(param_ranges.keys(), v)) 
-                            for v in itertools.product(*param_ranges.values())]
+        param_combinations = [dict(zip(selected_param_ranges.keys(), v)) 
+                            for v in itertools.product(*selected_param_ranges.values())]
 
         def evaluate_params(params):
             """Evaluate a single parameter combination"""
             pos_size = params.pop('position_size_pct')
-            strategy = BreakoutStrategy(**params)
+            strategy = SelectedStrategy(**params)
             backtest = EnhancedBacktest(
                 data=data,
                 strategy=strategy,
@@ -413,19 +469,19 @@ def optimize_strategy_parameters(
                 position_size_pct=pos_size
             )
             results = backtest.run()
-            params['position_size_pct'] = pos_size  # Add back for results
+            params['position_size_pct'] = pos_size
             return {
                 'params': params,
                 'results': results,
-                'sharpe': results['sharpe_ratio']
+                'sharpe': results['risk_metrics']['Sharpe Ratio']
             }
 
-        # Run optimization in parallel - takes around 30 min on current params
+        # Run optimization in parallel - this is still v.slow and multiprocessing causes some scary warnings
         with ThreadPoolExecutor(max_workers=n_jobs if n_jobs > 0 else None) as executor:
             evaluations = list(tqdm(
                 executor.map(evaluate_params, param_combinations),
                 total=len(param_combinations),
-                desc="Optimizing parameters"
+                desc=f"Optimizing {strategy_type} parameters"
             ))
         
         best_evaluation = max(evaluations, key=lambda x: x['sharpe'])
@@ -433,10 +489,9 @@ def optimize_strategy_parameters(
         best_results = best_evaluation['results']
         
         if plot:
-            # just use best params and plot that one
             strategy_params = {k: v for k, v in best_params.items() 
                              if k != 'position_size_pct'}
-            best_strategy = BreakoutStrategy(**strategy_params)
+            best_strategy = SelectedStrategy(**strategy_params)
             best_backtest = EnhancedBacktest(
                 data=data,
                 strategy=best_strategy,
@@ -449,6 +504,7 @@ def optimize_strategy_parameters(
         
         return {
             "file_name": file_name,
+            "strategy_type": strategy_type,
             "metrics": best_results,
             "best_parameters": best_params,
             "optimization_results": {
@@ -457,36 +513,85 @@ def optimize_strategy_parameters(
             }
         }
 
+def load_config(config_path: str = "config/config.yaml") -> dict:
+    """
+    Load configuration from YAML file.
+    
+    Args:
+        config_path (str): Path to the configuration file
+        
+    Returns:
+        dict: Configuration dictionary
+    """
+    try:
+        with open(config_path, 'r') as file:
+            config = yaml.safe_load(file)
+            
+        # all the config is needed here, ideally not to use defaults
+        required_sections = {'data_paths', 'backtest_config', 'test_configs'}
+        missing_sections = required_sections - set(config.keys())
+        if missing_sections:
+            raise ValueError(f"Missing required sections in config: {missing_sections}")
+            
+        return config
+    except Exception as e:
+        raise Exception(f"Error loading configuration: {str(e)}")
+
+
 if __name__ == "__main__":
-
+    config = load_config()
+    
     logger = setup_logger(
-    name="trading_bot",
-    config_path="config/logging_config.yaml",
-    default_level=logging.INFO
-)
-
-    ZIP_PATH = "data/raw/Kraken_OHLCVT.zip"
-    files_to_test = ["ETHGBP_30.csv"]
+        name="trading_bot",
+        config_path=config['logging']['config_path'],
+        default_level=logging.INFO,
+        log_to_console=config['logging'].get('log_to_console', False)
+    )
+    
+    ZIP_PATH = config['data_paths']['historical_data']
+    backtest_settings = config['backtest_config']
     
     results = []
-    for file_name in files_to_test:
+    for test_config in config['test_configs']:
         result = optimize_strategy_parameters(
-            file_name=file_name,
+            file_name=test_config['file'],
             zip_path=ZIP_PATH,
-            optimize=True,
-            max_allocation_pct=0.33,
-            plot=False,
-            n_jobs=5 
+            strategy_type=test_config['strategy'],
+            optimize=test_config.get('optimize', False),
+            initial_cash=backtest_settings.get('initial_cash', 10000),
+            max_allocation_pct=backtest_settings.get('max_allocation_pct', 0.33),
+            plot=test_config.get('plot', False),
+            n_jobs=backtest_settings.get('n_jobs', 5)
         )
         results.append(result)
     
+    # ive based these on the backtesting package metrics, need to select most relevant 
     for result in results:
-        print(f"\nResults for {result['file_name']}:")
-        if 'best_parameters' in result:
-            print("\nBest Parameters Found:")
-            for param, value in result['best_parameters'].items():
-                print(f"  {param}: {value}")
-        print("\nMetrics:")
-        for metric, value in result['metrics'].items():
-            if metric not in ['equity_curve', 'signals']:
-                print(f"  {metric}: {value}")
+        print(f"\n{'='*50}")
+        print(f"BACKTEST RESULTS FOR {result['file_name']}")
+        print(f"Strategy: {result['strategy_type'].upper()}")
+        print(f"{'='*50}")
+        
+        if 'parameters' in result:
+            print("\nStrategy Parameters:")
+            for param, value in result['parameters'].items():
+                print(f"{param:.<20} {value}")
+            print("\n" + "-"*50)
+
+        metrics = result['metrics']
+
+        print("\nRETURN METRICS:")
+        for metric, value in metrics['return_metrics'].items():
+            print(f"{metric:.<30} {value}")
+            
+        print("\nRISK METRICS:")
+        for metric, value in metrics['risk_metrics'].items():
+            print(f"{metric:.<30} {value}")
+            
+        print("\nTRADE METRICS:")
+        for metric, value in metrics['trade_metrics'].items():
+            print(f"{metric:.<30} {value}")
+            
+        print("\nTIME METRICS:")
+        for metric, value in metrics['time_metrics'].items():
+            print(f"{metric:.<30} {value}")

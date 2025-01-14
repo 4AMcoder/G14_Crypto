@@ -1,46 +1,30 @@
-# config/logging_config.yaml
 version: 1
 disable_existing_loggers: false
 
 formatters:
-    file:
+    standard:
         format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         datefmt: '%Y-%m-%d %H:%M:%S'
-    console:
-        format: '%(levelname)s - %(message)s'
 
 handlers:
-    file_handler:
-        class: logging.handlers.RotatingFileHandler
-        level: INFO
-        formatter: file
-        filename: './data/logs/trading_bot.log'  # Updated path to data/logs
-        maxBytes: 5242880  # 5MB
-        backupCount: 3
-        encoding: utf8
-    
     console_handler:
         class: logging.StreamHandler
         level: INFO
-        formatter: console
+        formatter: standard
         stream: ext://sys.stdout
+
+    file_handler:
+        class: logging.FileHandler
+        level: INFO
+        formatter: standard
+        filename: trading_bot.log 
 
 loggers:
     trading_bot:
         level: INFO
-        handlers: [file_handler, console_handler]
-        propagate: false
-    
-    trading_bot.backtest:
-        level: INFO
-        handlers: [file_handler, console_handler]
-        propagate: false
-    
-    trading_bot.strategy:
-        level: INFO
-        handlers: [file_handler, console_handler]
+        handlers: [console_handler, file_handler]
         propagate: false
 
 root:
     level: INFO
-    handlers: [console_handler]
+    handlers: [console_handler, file_handler]
