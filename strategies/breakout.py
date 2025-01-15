@@ -8,11 +8,11 @@ from utils.logger import get_logger
 class BreakoutStrategy:
     def __init__(
         self,
-        lookback: int = 30,
+        lookback: int = 18,
         base_lookback: int = 20,
         buffer: float = 0.001,
-        stop_loss_factor: float = 1.25,
-        take_profit_factor: float = 2.75,
+        stop_loss_factor: float = 18.5,
+        take_profit_factor: float = 8.75,
         rsi_lookback: int = 20,  
         volume_lookback: int = 20, 
         rc_threshold: float = 0.5, 
@@ -57,23 +57,30 @@ class BreakoutStrategy:
             20000: 1.8    # Massive datasets
         }
 
-    def calculate_atr(self, data: pd.DataFrame) -> pd.Series:
-        """Calculate Average True Range"""
+    def calculate_atr(self, data: pd.DataFrame, period = 14) -> pd.Series:
+        """
+        Calculate Average True Range
+
+        period here is the smoothing factor. 14 as default purely because its the common choice
+        lower val = ART is more sensitive to more recent price change
+        higher val = smooths over a longer time frame so less responsive to short term volatility
+        """
         high = data['high']
         low = data['low']
-        close = data['close']
+        close = data['close'].shift(1)
         
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        
+        tr1 = (high - low) / low  # Percentage high-low range
+        tr2 = abs(high - close) / close  # Percentage high-prev_close range
+        tr3 = abs(low - close) / close  # Percentage low-prev_close range
+            
         tr = pd.DataFrame({
             'tr1': tr1, 
             'tr2': tr2, 
             'tr3': tr3
         }).max(axis=1)
         
-        atr = tr.ewm(span=self.base_lookback, min_periods=self.base_lookback).mean()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.ewm(span=period, adjust=False).mean()
         return atr
 
     def calculate_rsi(self, data: pd.Series, window: int) -> pd.Series:

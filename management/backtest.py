@@ -258,6 +258,7 @@ class EnhancedBacktest:
         
         # Return Metrics 
         equity_final = self.equity
+        pnl = self.equity - self.initial_capital
         equity_peak = max(self.equity_curve)
         total_return = ((self.equity - self.initial_capital) / self.initial_capital * 100)
         
@@ -311,6 +312,7 @@ class EnhancedBacktest:
         return {
             "signals": self.signals,
             "return_metrics": {
+                "P&L [$]": round(pnl, 2),
                 "Equity Final [$]": round(equity_final, 2),
                 "Equity Peak [$]": round(equity_peak, 2),
                 "Return [%]": round(total_return, 2),
@@ -395,8 +397,6 @@ def optimize_strategy_parameters(
     # Strategy parameter ranges for optimization - might remove in place of the yaml config
     param_ranges = {
         'breakout': {
-            'lookback': range(10, 31, 5),
-            'buffer': [0.001, 0.002, 0.003],
             'stop_loss_factor': [1.0, 1.25, 1.5],
             'take_profit_factor': [2.0, 2.5, 3.0],
             'volume_multiplier': [0.1, 0.15, 0.2],
@@ -442,7 +442,7 @@ def optimize_strategy_parameters(
         strategy_params = {
             k: v for k, v in strategy.__dict__.items() 
             if isinstance(v, (int, float, str, bool, dict, list))
-        }
+        }  # to filter any object types. (had conversion / type errors)
             
         return {
             "file_name": file_name,
@@ -463,7 +463,7 @@ def optimize_strategy_parameters(
             pos_size = params.pop('position_size_pct')
             strategy = SelectedStrategy(**params)
             backtest = EnhancedBacktest(
-                data=data,
+                data=data[-2016:],
                 strategy=strategy,
                 initial_capital=initial_cash,
                 position_size_pct=pos_size
@@ -493,7 +493,7 @@ def optimize_strategy_parameters(
                              if k != 'position_size_pct'}
             best_strategy = SelectedStrategy(**strategy_params)
             best_backtest = EnhancedBacktest(
-                data=data,
+                data=data[-2016:],
                 strategy=best_strategy,
                 initial_capital=initial_cash,
                 position_size_pct=best_params['position_size_pct']
