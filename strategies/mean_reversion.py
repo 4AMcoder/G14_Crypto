@@ -9,7 +9,7 @@ from utils.logger import get_logger
 class MeanReversionStrategy:
     def __init__(
         self,
-        lookback: int = 20,
+        lookback: int = 24,
         std_dev_threshold: float = 2.0,
         rsi_period: int = 14,
         rsi_overbought: int = 70,
@@ -75,42 +75,66 @@ class MeanReversionStrategy:
         signals['volume_ma'] = data.ta.sma(close=data['volume'], length=self.lookback)
         signals['volume_ratio'] = signals['volume'] / signals['volume_ma']
         
-        # Mean reversion signals
-        signals['buy_signal'] = (
-            (signals['zscore'] < -self.zscore_threshold) &  #
-            (signals['close'] < signals['bb_lower']) &     
-            (signals['rsi'] < self.rsi_oversold) &        
-            (signals['stoch_k'] < 20) &                   
-            (signals['volume_ratio'] > self.volume_threshold) 
+        signals['ema_fast'] = data.ta.ema(length=5)    # 2.5 hours
+        signals['ema_medium'] = data.ta.ema(length=21)  # ~10.5 hours
+        signals['ema_slow'] = data.ta.ema(length=55)    # ~27.5 hours
+        
+        # Calculate crossover signals
+        signals['fast_medium_cross'] = (
+            (signals['ema_fast'] > signals['ema_medium']) & 
+            (signals['ema_fast'].shift(1) <= signals['ema_medium'].shift(1))
         )
-
+        signals['medium_slow_cross'] = (
+            (signals['ema_medium'] > signals['ema_slow']) & 
+            (signals['ema_medium'].shift(1) <= signals['ema_slow'].shift(1))
+        )
+        
+        # Calculate distance from EMAs as percentage
+        signals['fast_dev'] = (signals['close'] - signals['ema_fast']) / signals['ema_fast']
+        signals['medium_dev'] = (signals['close'] - signals['ema_medium']) / signals['ema_medium']
+        signals['slow_dev'] = (signals['close'] - signals['ema_slow']) / signals['ema_slow']
+        
+        # Enhanced mean reversion buy signals
+        signals['buy_signal'] = (
+            (signals['zscore'] < -self.zscore_threshold) &
+            (signals['close'] < signals['bb_lower']) &
+            (signals['rsi'] < self.rsi_oversold) &
+            # Add MA deviation conditions
+            (signals['fast_dev'] < -0.02) &    # Price at least 2% below fast EMA
+            (signals['medium_dev'] < -0.015) &  # Price at least 1.5% below medium EMA
+            (signals['volume_ratio'] > self.volume_threshold)
+        )
+        
+        # Enhanced mean reversion sell signals
         signals['sell_signal'] = (
-            (signals['zscore'] > self.zscore_threshold) &   
-            (signals['close'] > signals['bb_upper']) &     
-            (signals['rsi'] > self.rsi_overbought) &      
-            (signals['stoch_k'] > 80) &                
-            (signals['volume_ratio'] > self.volume_threshold) 
+            (signals['zscore'] > self.zscore_threshold) &
+            (signals['close'] > signals['bb_upper']) &
+            (signals['rsi'] > self.rsi_overbought) &
+            # Add MA deviation conditions
+            (signals['fast_dev'] > 0.02) &     # Price at least 2% above fast EMA
+            (signals['medium_dev'] > 0.015) &   # Price at least 1.5% above medium EMA
+            (signals['volume_ratio'] > self.volume_threshold)
         )
 
         signals['stop_loss'] = np.where(
-            signals['buy_signal'],
-            signals['close'] - signals['atr'] * self.stop_loss_factor,
-            np.where(
-                signals['sell_signal'],
-                signals['close'] + signals['atr'] * self.stop_loss_factor,
-                np.nan
+                signals['buy_signal'],
+                signals['close'] - signals['atr'] * self.stop_loss_factor,
+                np.where(
+                    signals['sell_signal'],
+                    signals['close'] + signals['atr'] * self.stop_loss_factor,
+                    np.nan
+                )
             )
-        )
 
         signals['take_profit'] = np.where(
-            signals['buy_signal'],
-            signals['close'] + signals['atr'] * self.take_profit_factor,
-            np.where(
-                signals['sell_signal'],
-                signals['close'] - signals['atr'] * self.take_profit_factor,
-                np.nan
+                signals['buy_signal'],
+                signals['close'] + signals['atr'] * self.take_profit_factor,
+                np.where(
+                    signals['sell_signal'],
+                    signals['close'] - signals['atr'] * self.take_profit_factor,
+                    np.nan
+                )
             )
-        )
 
         return signals
 

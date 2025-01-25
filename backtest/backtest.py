@@ -415,7 +415,7 @@ def optimize_strategy_parameters(
         backtest = EnhancedBacktest(
             data=data,
             strategy=strategy,
-            initial_capital=backtest_config['initial_cash'],
+            initial_capital=backtest_config['initial_capital'],
             max_allocation_pct=pos_size,
             commission_pct=backtest_config['commission_pct'],
             slippage_pct=backtest_config['slippage_pct'],
@@ -483,33 +483,28 @@ def load_config(config_path: str = "config/config.yaml") -> dict:
 
 
 if __name__ == "__main__":
-    # Load configuration
     config = load_config()
-    
-    # Setup logging
+
     logger = setup_logger(
         name="trading_bot",
         config_path=config['logging']['config_path'],
-        default_level=logging.WARNING,  # Changed to WARNING to reduce output
+        default_level=logging.INFO,
         log_to_console=config['logging'].get('log_to_console', False)
     )
-    
-    # Load data from zip file
+
     data_dict = load_specific_csv_from_zip(
         config['data_paths']['historical_data'],
         [test['file'] for test in config['test_configs']]
     )
-    
-    # Run tests based on configuration
+
     results = []
     for test_config in config['test_configs']:
         logger.info(f"Running backtest for {test_config['file']}")
         
-        # Get data for this test
         data = data_dict[test_config['file']]
         
         if test_config.get('optimize', False):
-            # Run optimization if specified
+            # Run optimization if specified in config - TODO: need to fix this, takes far too long
             result = optimize_strategy_parameters(
                 data=data,
                 strategy_type=test_config['strategy'],
@@ -529,20 +524,19 @@ if __name__ == "__main__":
                     data=data,
                     strategy=strategy,
                     **{k: v for k, v in config['backtest_config'].items() 
-                       if k in ['initial_cash', 'max_allocation_pct', 'commission_pct', 
+                       if k in ['initial_capital', 'max_allocation_pct', 'commission_pct', 
                               'slippage_pct', 'max_positions', 'enable_fractional']}
                 )
                 final_results = backtest.run()
                 backtest.plot_results()
                 strategy.plot_signals(final_results['signals'])
         else:
-            # Run single backtest with default parameters
+            # Path to run the defaults
             strategy_class = (
                 BreakoutStrategy if test_config['strategy'] == 'breakout'
                 else MeanReversionStrategy
             )
             
-            # Get default parameters from config
             strategy_params = config['strategy_params'][test_config['strategy']]
             default_params = {
                 k: v[0] if isinstance(v, list) else v
@@ -556,23 +550,22 @@ if __name__ == "__main__":
                 data=data,
                 strategy=strategy,
                 **{k: v for k, v in config['backtest_config'].items() 
-                   if k in ['initial_cash', 'max_allocation_pct', 'commission_pct', 
+                   if k in ['initial_capital', 'max_allocation_pct', 'commission_pct', 
                           'slippage_pct', 'max_positions', 'enable_fractional']}
             )
             
             result = backtest.run()
-            
+
             if test_config.get('plot', False):
                 backtest.plot_results()
                 strategy.plot_signals(result['signals'])
-            
+
             # Add test configuration to results
             result['file_name'] = test_config['file']
             result['strategy_type'] = test_config['strategy']
-        
+
         results.append(result)
-    
-    # Print results
+
     for result in results:
         print(f"\n{'='*50}")
         print(f"BACKTEST RESULTS FOR {result['file_name']}")
